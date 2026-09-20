@@ -45,25 +45,28 @@ void main(){
   vec2 flow = vec2(fbm(uv * 2.6 + vec2(T, 0.0)), fbm(uv * 2.6 + vec2(7.3, -T))) - 0.5;
   vec3 n = normalize(vec3(-grad + flow * 0.9, 1.0));
 
-  // reflected environment: soft bands that drift
+  // Region split, measured in hexagon units from the mark's centre (1.0 = outer edge of the frame).
+  vec2 p = (uv - 0.5) * ${N}.0 / 220.0;
+  float hn = max(abs(p.x) / 0.866, abs(p.x) * 0.5774 + abs(p.y));
+  float frame = smoothstep(0.71, 0.77, hn);
+
+  // Liquid chrome for the inner pieces: near-black steel with sharp, drifting white streaks.
   vec3 r = reflect(vec3(0.0, 0.0, -1.0), n);
-  float bands = sin(r.x * 5.5 + r.y * 3.2 + fbm(uv * 3.0 + T * 2.0) * 4.0 + uTime * 0.22);
-  float metal = smoothstep(-0.7, 0.85, bands);
-  float spec = pow(max(dot(n, normalize(vec3(-0.45, 0.65, 0.62))), 0.0), 26.0);
+  float warp = fbm(uv * 3.2 + T * 2.0) * 3.2;
+  float bands = sin(r.x * 7.0 + r.y * 4.0 + warp + uTime * 0.25);
+  float streak = smoothstep(-0.3, 0.8, bands);
+  float spec = pow(max(dot(n, normalize(vec3(-0.5, 0.7, 0.55))), 0.0), 60.0);
+  vec3 chrome = mix(vec3(0.03, 0.035, 0.05), vec3(0.84, 0.86, 0.9), streak * streak * 0.95 + streak * 0.1) + spec * 0.8;
 
-  vec3 steelDark = vec3(0.10, 0.11, 0.13);
-  vec3 steelLight = vec3(0.94, 0.96, 0.99);
-  vec3 col = mix(steelDark, steelLight, metal) + spec * 0.55;
+  // Hot orange flares on the steep edges of the inner pieces.
+  float steep = smoothstep(0.1, 0.3, length(grad));
+  float hot = smoothstep(0.7, 0.95, noise(uv * 8.0 + vec2(uTime * 0.3, -uTime * 0.17)));
+  chrome += vec3(1.0, 0.5, 0.12) * steep * hot * 0.95;
 
-  // thick, flat regions (the outer frame) read as bright polished metal
-  float thick = smoothstep(0.26, 0.6, t.b);
-  col = mix(col, mix(vec3(0.86, 0.88, 0.92), vec3(1.0), metal), thick * 0.88);
+  // The outer frame is flat polished white with a faint drifting sheen.
+  vec3 white = vec3(0.965, 0.972, 0.985) + 0.035 * sin(uv.x * 9.0 + uv.y * 6.0 + uTime * 0.4);
 
-  // warm hot rim on steep edges
-  float steep = smoothstep(0.03, 0.16, length(grad));
-  float flick = 0.35 + 0.65 * noise(uv * 9.0 + vec2(uTime * 0.35, -uTime * 0.2));
-  col += vec3(1.0, 0.46, 0.13) * steep * flick * (1.0 - thick) * 0.55;
-
+  vec3 col = mix(chrome, white, frame);
   gl_FragColor = vec4(col * mask, mask);
 }`;
 
