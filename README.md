@@ -25,12 +25,19 @@ Connect MetaMask · post or take an order · settle on-chain in one transaction.
 3. **Pick an order.** The Order Book shows **Sell Orders** (buy ORB) and **Buy Orders** (sell ORB) with price, volume and total. Click a row's button, enter an amount (full or partial) and confirm.
 4. **Or post your own.** Open **New Order**, set a price and amount, and place it. Manage or cancel open orders under **My Orders**.
 
+## Private receive and one-time addresses
+
+- **Receive privately.** When you buy ORB you can choose to have it paid into a shielded note for your Orbinum privacy address instead of your public address. Paste the privacy address from Orbinum Hub. Afterwards open Hub, go to Shielded Pool and run **Recover Notes** to see the ORB.
+- **One-time address.** The site can create a fresh trading address in your browser (nothing is stored). Fund it by unshielding from Hub, import it into your wallet, and trade without using your main address.
+- **Proof on demand.** After a private receive you can download a receipt with a disclosure key and sign it with your trading address, to prove a specific trade only when you choose to.
+
 ## Why it is safe to use
 
 - **Non-custodial escrow.** Funds sit in the OrbOTC smart contract, never with us. They move only when an order is filled or its maker cancels.
 - **Cancel anytime.** Unfilled escrow goes straight back to the maker.
-- **No fees** on testnet, other than gas paid in ORB.
+- **Fees** are charged in tUSD on the trade amount: taker 0.20%, maker 0.10% (the maker rate is fixed when the order is placed). The contract caps each side at 1.00%. Gas is paid in ORB.
 - **No account, no sign-up.** Your wallet is your login.
+- **Operator controls never touch your funds.** The operator can pause new trading or block specific addresses from new trades, but cancelling your own order always works.
 
 ## How it works
 
@@ -69,12 +76,16 @@ Connect MetaMask · post or take an order · settle on-chain in one transaction.
 
 ## For the team
 
-Contract deployment, hosting and release steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md).
+Contract deployment, hosting and release steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md). Compliance notes and limits of the operator controls are in [docs/COMPLIANCE.md](docs/COMPLIANCE.md).
 
 ## Roadmap
 
 - [x] Escrow order book with partial fills (testnet)
 - [ ] Trade history from `OrderFilled` events
-- [ ] Shielded settlement via Orbinum shielded pools
+- [x] Private receive for sell orders via the Orbinum shielded pool (testnet)
+- [x] Operator pause and blocklist, one-time address tool, trade receipts
+- [ ] Private receive for buy orders (needs a per-order privacy address)
+- [ ] Automated sanctions screening and multisig admin
+- [ ] Mainnet stablecoins (USDT/USDC) with cross-network funding and payout, see [docs/CROSSCHAIN.md](docs/CROSSCHAIN.md)
 - [ ] Order expiry and minimum fill size
 - [ ] Security audit and mainnet launch

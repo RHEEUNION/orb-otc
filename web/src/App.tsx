@@ -10,12 +10,15 @@ import {
   parseUnits,
   type Address,
 } from "viem";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   DEPLOYED,
   erc20Abi,
+  IS_V2,
   orbinumTestnet,
   otcAbi,
   OTC,
+  PRIVATE_FILL_GAS,
   QUOTE,
   QUOTE_DECIMALS,
   QUOTE_SYMBOL,
@@ -26,12 +29,32 @@ type Order = {
   maker: Address;
   isSell: boolean;
   open: boolean;
+  makerFeeBps: number;
   price: bigint;
   remainingOrb: bigint;
   remainingQuote: bigint;
+  remainingFee: bigint;
 };
-type Tab = "market" | "mine" | "create" | "faq";
+type Tab = "market" | "mine" | "create" | "onetime" | "faq";
 type Toast = { msg: string; err?: boolean } | null;
+type Receipt = {
+  app: string;
+  network: string;
+  chainId: number;
+  contract: string;
+  orderId: string;
+  txHash: string;
+  address: string;
+  orbAmount: string;
+  quoteAmount: string;
+  takerFee: string;
+  price: string;
+  commitment: string;
+  disclosureKey: string;
+  createdAt: string;
+  signMessage?: string;
+  signature?: string;
+};
 
 const pub = createPublicClient({ chain: orbinumTestnet, transport: http() });
 const eth = () => (window as any).ethereum;
@@ -39,7 +62,10 @@ const eth = () => (window as any).ethereum;
 const fmtPrice = (p: bigint) => Number(formatUnits(p, QUOTE_DECIMALS)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 const fmtOrb = (v: bigint) => Number(formatEther(v)).toLocaleString(undefined, { maximumFractionDigits: 4 });
 const cost = (orb: bigint, price: bigint) => (orb * price + 10n ** 18n - 1n) / 10n ** 18n;
+const feeOf = (amount: bigint, bps: number) => (amount * BigInt(bps)) / 10000n;
+const pct = (bps: number) => `${(bps / 100).toFixed(2)}%`;
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+const explorerTx = (h: string) => `${orbinumTestnet.blockExplorers.default.url}/tx/${h}`;
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("market");
@@ -50,10 +76,14 @@ export default function App() {
   const [toast, setToast] = useState<Toast>(null);
   const [busy, setBusy] = useState(false);
   const [fill, setFill] = useState<Order | null>(null);
+  const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [paused, setPaused] = useState(false);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [fees, setFees] = useState({ maker: 0, taker: 0 });
 
   const notify = (msg: string, err = false) => {
     setToast({ msg, err });
-    setTimeout(() => setToast(null), 5000);
+    setTimeout(() => setToast(null), 6000);
   };
 
   const loadOrders = useCallback(async () => {
@@ -65,12 +95,23 @@ export default function App() {
       list.forEach((o: any, i: number) => all.push({ id: ids[i], ...o }));
     }
     setOrders(all.filter((o) => o.open));
+    if (IS_V2) {
+      setPaused((await pub.readContract({ address: OTC, abi: otcAbi, functionName: "paused" })) as boolean);
+      const [maker, taker, recipient] = await Promise.all([
+        pub.readContract({ address: OTC, abi: otcAbi, functionName: "makerFeeBps" }),
+        pub.readContract({ address: OTC, abi: otcAbi, functionName: "takerFeeBps" }),
+        pub.readContract({ address: OTC, abi: otcAbi, functionName: "feeRecipient" }),
+      ]);
+      const on = (recipient as string) !== "0x0000000000000000000000000000000000000000";
+      setFees({ maker: on ? Number(maker) : 0, taker: on ? Number(taker) : 0 });
+    }
   }, []);
 
   const loadBalances = useCallback(async () => {
     if (!account) return;
     setOrbBal(await pub.getBalance({ address: account }));
     if (DEPLOYED) setUsdBal((await pub.readContract({ address: QUOTE, abi: erc20Abi, functionName: "balanceOf", args: [account] })) as bigint);
+    if (IS_V2) setIsBlocked((await pub.readContract({ address: OTC, abi: otcAbi, functionName: "blocked", args: [account] })) as boolean);
   }, [account]);
 
   useEffect(() => {
@@ -111,17 +152,24 @@ export default function App() {
     }
   }
 
-  async function run(label: string, fn: () => Promise<`0x${string}`[]>) {
-    if (!account) return notify("Connect wallet first", true);
+  /** Runs a transaction flow, waits for every hash, refreshes, and returns the hashes (or null on failure). */
+  async function run(label: string, fn: () => Promise<`0x${string}`[]>): Promise<`0x${string}`[] | null> {
+    if (!account) {
+      notify("Connect wallet first", true);
+      return null;
+    }
     setBusy(true);
     try {
       await ensureChain();
-      for (const hash of await fn()) await pub.waitForTransactionReceipt({ hash });
+      const hashes = await fn();
+      for (const hash of hashes) await pub.waitForTransactionReceipt({ hash });
       notify(`${label} ✓`);
       await loadOrders();
       await loadBalances();
+      return hashes;
     } catch (e: any) {
       notify(e.shortMessage ?? e.message, true);
+      return null;
     } finally {
       setBusy(false);
     }
@@ -141,38 +189,97 @@ export default function App() {
   const cancel = (o: Order) =>
     run("Order cancelled", async () => [await wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "cancelOrder", args: [o.id] })]);
 
-  const confirmFill = (o: Order, orbAmount: bigint) => {
+  async function confirmFill(o: Order, orbAmount: bigint, privacyAddress?: string) {
     setFill(null);
-    return run("Order filled", async () => {
+    if (o.isSell && privacyAddress) {
+      // Build the shielded note in the browser from the PUBLIC privacy address. No key is handled.
+      let note;
+      try {
+        const { buildPrivateNote } = await import("./privacy");
+        note = buildPrivateNote(privacyAddress, orbAmount);
+      } catch (e: any) {
+        return notify(e.message, true);
+      }
+      const quoteAmount = cost(orbAmount, o.price);
+      const takerFee = feeOf(quoteAmount, fees.taker);
+      const hashes = await run("Filled — ORB sent to your private note", async () => {
+        await approveIfNeeded(quoteAmount + takerFee);
+        return [
+          await wallet().writeContract({
+            address: OTC,
+            abi: otcAbi,
+            functionName: "fillSellOrderPrivate",
+            args: [o.id, orbAmount, note.commitment as `0x${string}`, note.memo as `0x${string}`],
+            gas: PRIVATE_FILL_GAS,
+          }),
+        ];
+      });
+      if (hashes) {
+        setReceipt({
+          app: "ORB.OTC",
+          network: orbinumTestnet.name,
+          chainId: orbinumTestnet.id,
+          contract: OTC,
+          orderId: o.id.toString(),
+          txHash: hashes[hashes.length - 1],
+          address: account!,
+          orbAmount: formatEther(orbAmount),
+          quoteAmount: formatUnits(quoteAmount, QUOTE_DECIMALS),
+          takerFee: formatUnits(takerFee, QUOTE_DECIMALS),
+          price: formatUnits(o.price, QUOTE_DECIMALS),
+          commitment: note.commitment,
+          disclosureKey: note.disclosureKey,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      return;
+    }
+    await run("Order filled", async () => {
       if (o.isSell) {
-        await approveIfNeeded(cost(orbAmount, o.price));
+        const q = cost(orbAmount, o.price);
+        await approveIfNeeded(q + feeOf(q, fees.taker));
         return [await wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "fillSellOrder", args: [o.id, orbAmount] })];
       }
       return [await wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "fillBuyOrder", args: [o.id], value: orbAmount })];
     });
-  };
+  }
 
   const create = (isSell: boolean, price: bigint, orb: bigint) =>
     run("Order created", async () => {
       if (isSell)
         return [await wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "createSellOrder", args: [price], value: orb })];
-      await approveIfNeeded(cost(orb, price));
+      const q = cost(orb, price);
+      await approveIfNeeded(q + feeOf(q, fees.maker));
       return [await wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "createBuyOrder", args: [price, orb] })];
     });
+
+  async function signReceipt() {
+    if (!receipt || !account) return;
+    const message = `ORB.OTC receipt\ntx: ${receipt.txHash}\ncommitment: ${receipt.commitment}\naddress: ${account}`;
+    try {
+      const signature = await wallet().signMessage({ message });
+      setReceipt({ ...receipt, signMessage: message, signature });
+    } catch (e: any) {
+      notify(e.shortMessage ?? e.message, true);
+    }
+  }
 
   const sells = useMemo(() => orders.filter((o) => o.isSell).sort((a, b) => (a.price < b.price ? -1 : a.price > b.price ? 1 : 0)), [orders]);
   const buys = useMemo(() => orders.filter((o) => !o.isSell).sort((a, b) => (a.price > b.price ? -1 : a.price < b.price ? 1 : 0)), [orders]);
   const mine = useMemo(() => orders.filter((o) => account && o.maker.toLowerCase() === account.toLowerCase()), [orders, account]);
+  const tradingOff = paused || isBlocked;
 
   return (
     <>
       <div className="banner">TESTNET ONLY — Orbinum Testnet (chain 2700). Tokens have no real value.</div>
+      {paused && <div className="banner alert">Trading is paused by the operator. You can still cancel your own orders and get your funds back.</div>}
+      {!paused && isBlocked && <div className="banner alert">This address is blocked from new trades. You can still cancel your own orders and get your funds back.</div>}
       <header>
         <div className="brand">ORB<span>.OTC</span><span className="badge">testnet</span></div>
         <nav>
-          {(["market", "mine", "create", "faq"] as Tab[]).map((t) => (
+          {(["market", "mine", "create", ...(IS_V2 ? ["onetime"] : []), "faq"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
-              {{ market: "Order Book", mine: "My Orders", create: "New Order", faq: "FAQ" }[t]}
+              {{ market: "Order Book", mine: "My Orders", create: "New Order", onetime: "One-time address", faq: "FAQ" }[t]}
             </button>
           ))}
         </nav>
@@ -194,9 +301,12 @@ export default function App() {
 
         {tab === "market" && (
           <div className="grid">
-            <Book title="Sell Orders" orders={sells} action="Buy ORB" cls="buy-btn" onAct={setFill} />
-            <Book title="Buy Orders" orders={buys} action="Sell ORB" cls="sell-btn" onAct={setFill} />
+            <Book title="Sell Orders" orders={sells} action="Buy ORB" cls="buy-btn" disabled={tradingOff} onAct={setFill} />
+            <Book title="Buy Orders" orders={buys} action="Sell ORB" cls="sell-btn" disabled={tradingOff} onAct={setFill} />
           </div>
+        )}
+        {tab === "market" && IS_V2 && (
+          <p className="hint">Fees are charged in {QUOTE_SYMBOL}: taker {pct(fees.taker)} on fills, maker {pct(fees.maker)} (fixed when the order is placed). Prices above exclude fees.</p>
         )}
 
         {tab === "mine" && (
@@ -220,7 +330,8 @@ export default function App() {
           </>
         )}
 
-        {tab === "create" && <CreateForm busy={busy} onSubmit={create} />}
+        {tab === "create" && <CreateForm busy={busy || tradingOff} makerBps={fees.maker} onSubmit={create} />}
+        {tab === "onetime" && <OneTimeAddress />}
 
         {tab === "faq" && (
           <div className="faq">
@@ -232,21 +343,28 @@ export default function App() {
             <h3>Can I fill part of an order?</h3>
             <p>Yes. Enter any amount up to the remaining size.</p>
             <h3>Fees?</h3>
-            <p>None on testnet, other than gas paid in ORB.</p>
-            <h3>Privacy?</h3>
-            <p>Orders and fills are public EVM transactions today. Settlement through Orbinum shielded pools is on the roadmap.</p>
+            <p>Fees are charged in {QUOTE_SYMBOL}. The taker pays the price plus a taker fee; the maker receives the price minus a maker fee (or, for a buy order, escrows the price plus the maker fee, and any unused part is refunded when you cancel). The maker fee is fixed when the order is placed and never rises afterwards. Current rates: taker {pct(fees.taker)}, maker {pct(fees.maker)}, capped at 1.00% each by the contract. Gas is paid in ORB.</p>
+            <h3>Private receive</h3>
+            <p>When you buy ORB from a sell order you can choose “Receive privately”. The ORB is paid into a shielded note for your Orbinum privacy address instead of your public address. Paste the privacy address from Orbinum Hub. Afterwards, open Hub → Shielded Pool → Recover Notes to see it. Price, size and the trading address stay public; what is hidden is who owns the ORB afterwards.</p>
+            <h3>Trading without your main address</h3>
+            <p>Every trade is made from an EVM address. Use the “One-time address” page to create a fresh one, fund it by unshielding from Hub, and import it into your wallet. Nothing links it to your main address unless you choose to prove it.</p>
+            <h3>Proving a trade</h3>
+            <p>After a private receive you can download a receipt with a disclosure key and sign it with the trading address. Share it only with whoever you need to show it to. A disclosure key proves a note's value and asset and cannot be used to spend it.</p>
+            <h3>Operator controls</h3>
+            <p>The operator can pause new trading and block specific addresses from creating or filling orders. Cancelling your own order always works, and the operator can never move or hold your funds.</p>
             <p>Contracts: OTC <a href={`${orbinumTestnet.blockExplorers.default.url}/address/${OTC}`} target="_blank" rel="noreferrer">{short(OTC)}</a> · {QUOTE_SYMBOL} <a href={`${orbinumTestnet.blockExplorers.default.url}/address/${QUOTE}`} target="_blank" rel="noreferrer">{short(QUOTE)}</a></p>
           </div>
         )}
       </main>
 
-      {fill && <FillModal order={fill} busy={busy} onClose={() => setFill(null)} onConfirm={confirmFill} />}
+      {fill && <FillModal order={fill} busy={busy} takerBps={fees.taker} privateAvailable={IS_V2} onClose={() => setFill(null)} onConfirm={confirmFill} />}
+      {receipt && <ReceiptModal receipt={receipt} onSign={signReceipt} onClose={() => setReceipt(null)} />}
       {toast && <div className={"toast" + (toast.err ? " err" : "")}>{toast.msg}</div>}
     </>
   );
 }
 
-function Book({ title, orders, action, cls, onAct }: { title: string; orders: Order[]; action: string; cls: string; onAct: (o: Order) => void }) {
+function Book({ title, orders, action, cls, disabled, onAct }: { title: string; orders: Order[]; action: string; cls: string; disabled: boolean; onAct: (o: Order) => void }) {
   return (
     <section>
       <h2>{title}</h2>
@@ -259,7 +377,7 @@ function Book({ title, orders, action, cls, onAct }: { title: string; orders: Or
               <td>{fmtPrice(o.price)}</td>
               <td>{fmtOrb(o.remainingOrb)}</td>
               <td>{fmtPrice(cost(o.remainingOrb, o.price))}</td>
-              <td><button className={"btn small " + cls} onClick={() => onAct(o)}>{action}</button></td>
+              <td><button className={"btn small " + cls} disabled={disabled} onClick={() => onAct(o)}>{action}</button></td>
             </tr>
           ))}
         </tbody>
@@ -268,11 +386,28 @@ function Book({ title, orders, action, cls, onAct }: { title: string; orders: Or
   );
 }
 
-function FillModal({ order, busy, onClose, onConfirm }: { order: Order; busy: boolean; onClose: () => void; onConfirm: (o: Order, amt: bigint) => void }) {
+function FillModal({ order, busy, takerBps, privateAvailable, onClose, onConfirm }: { order: Order; busy: boolean; takerBps: number; privateAvailable: boolean; onClose: () => void; onConfirm: (o: Order, amt: bigint, privacyAddress?: string) => void }) {
   const [amt, setAmt] = useState(formatEther(order.remainingOrb));
+  const [priv, setPriv] = useState(false);
+  const [addr, setAddr] = useState("");
+  const [addrError, setAddrError] = useState("");
   let orb = 0n;
   try { orb = parseEther(amt || "0"); } catch { /* invalid input */ }
   const valid = orb > 0n && orb <= order.remainingOrb && cost(orb, order.price) > 0n;
+
+  async function checkAddress(value: string) {
+    setAddr(value);
+    if (!value.trim()) return setAddrError("");
+    try {
+      const { parsePrivacyAddress } = await import("./privacy");
+      parsePrivacyAddress(value);
+      setAddrError("");
+    } catch (e: any) {
+      setAddrError(e.message);
+    }
+  }
+  const privOk = !priv || (addr.trim() !== "" && addrError === "");
+
   return (
     <div className="modal" onClick={onClose}>
       <div className="card" onClick={(e) => e.stopPropagation()}>
@@ -280,16 +415,99 @@ function FillModal({ order, busy, onClose, onConfirm }: { order: Order; busy: bo
         <label>Amount (ORB) — max {fmtOrb(order.remainingOrb)}</label>
         <input value={amt} onChange={(e) => setAmt(e.target.value)} inputMode="decimal" />
         <div className="summary">
-          @ {fmtPrice(order.price)} {QUOTE_SYMBOL}/ORB → you {order.isSell ? "pay" : "receive"} <b>{valid ? fmtPrice(cost(orb, order.price)) : "—"} {QUOTE_SYMBOL}</b>
+          @ {fmtPrice(order.price)} {QUOTE_SYMBOL}/ORB → price <b>{valid ? fmtPrice(cost(orb, order.price)) : "—"} {QUOTE_SYMBOL}</b>
+          {takerBps > 0 && valid && (
+            <>
+              <br />Taker fee ({pct(takerBps)}): {order.isSell ? "+" : "−"}{fmtPrice(feeOf(cost(orb, order.price), takerBps))} {QUOTE_SYMBOL}
+              <br />You {order.isSell ? "pay" : "receive"}: <b>{fmtPrice(order.isSell ? cost(orb, order.price) + feeOf(cost(orb, order.price), takerBps) : cost(orb, order.price) - feeOf(cost(orb, order.price), takerBps))} {QUOTE_SYMBOL}</b>
+            </>
+          )}
         </div>
-        <button className="btn" disabled={!valid || busy} onClick={() => onConfirm(order, orb)}>Confirm</button>{" "}
+        {order.isSell && privateAvailable && (
+          <>
+            <label className="check"><input type="checkbox" checked={priv} onChange={(e) => setPriv(e.target.checked)} /> Receive privately (shielded note)</label>
+            {priv && (
+              <>
+                <label>Your Orbinum privacy address (from Hub)</label>
+                <textarea value={addr} onChange={(e) => checkAddress(e.target.value)} placeholder="orbpriv3:0x…:0x…:xxxxxxxx" rows={3} />
+                {addrError && <div className="err-text">{addrError}</div>}
+                <div className="hint">Only public keys are used. After the trade, open Hub → Shielded Pool → Recover Notes to see your ORB.</div>
+              </>
+            )}
+          </>
+        )}
+        {!order.isSell && <div className="hint">The buyer receives the ORB publicly at their trading address.</div>}
+        <button className="btn" disabled={!valid || busy || !privOk} onClick={() => onConfirm(order, orb, priv ? addr.trim() : undefined)}>Confirm</button>{" "}
         <button className="btn ghost" onClick={onClose}>Close</button>
       </div>
     </div>
   );
 }
 
-function CreateForm({ busy, onSubmit }: { busy: boolean; onSubmit: (isSell: boolean, price: bigint, orb: bigint) => void }) {
+function ReceiptModal({ receipt, onSign, onClose }: { receipt: Receipt; onSign: () => void; onClose: () => void }) {
+  const download = () => {
+    const blob = new Blob([JSON.stringify(receipt, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `orb-otc-receipt-${receipt.txHash.slice(2, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <div className="modal" onClick={onClose}>
+      <div className="card wide" onClick={(e) => e.stopPropagation()}>
+        <h2>Trade receipt</h2>
+        <p className="hint">Nothing is stored by this site. Download it now if you may need to prove this trade later.</p>
+        <div className="kv"><span>Received</span><b>{receipt.orbAmount} ORB (private note)</b></div>
+        <div className="kv"><span>Paid</span><b>{receipt.quoteAmount} {QUOTE_SYMBOL} + {receipt.takerFee} fee</b></div>
+        <div className="kv"><span>Transaction</span><a href={explorerTx(receipt.txHash)} target="_blank" rel="noreferrer">{short(receipt.txHash)}</a></div>
+        <div className="kv"><span>Note commitment</span><code>{short(receipt.commitment)}</code></div>
+        <div className="kv"><span>Signed by</span><b>{receipt.signature ? short(receipt.address) : "not signed"}</b></div>
+        <p className="hint">To see the ORB: Orbinum Hub → Shielded Pool → Recover Notes.</p>
+        <button className="btn" onClick={download}>Download receipt</button>{" "}
+        <button className="btn ghost" onClick={onSign} disabled={!!receipt.signature}>{receipt.signature ? "Signed" : "Sign proof of address"}</button>{" "}
+        <button className="btn ghost" onClick={onClose}>Close</button>
+      </div>
+    </div>
+  );
+}
+
+function OneTimeAddress() {
+  const [acct, setAcct] = useState<{ address: string; key: string } | null>(null);
+  const [copied, setCopied] = useState("");
+  const gen = () => {
+    const key = generatePrivateKey();
+    setAcct({ address: privateKeyToAccount(key).address, key });
+    setCopied("");
+  };
+  const copy = async (what: string, text: string) => {
+    try { await navigator.clipboard.writeText(text); setCopied(what); } catch { /* clipboard unavailable */ }
+  };
+  return (
+    <div className="card wide">
+      <h2>One-time address</h2>
+      <p className="hint">Trade from a fresh address that has no history and is not linked to your main wallet. This page creates it in your browser and stores nothing.</p>
+      <button className="btn" onClick={gen}>Generate new address</button>
+      {acct && (
+        <>
+          <label>Address</label>
+          <div className="copyrow"><code>{acct.address}</code><button className="btn ghost small" onClick={() => copy("address", acct.address)}>{copied === "address" ? "Copied" : "Copy"}</button></div>
+          <label>Private key — keep secret, shown only now</label>
+          <div className="copyrow"><code>{acct.key}</code><button className="btn ghost small" onClick={() => copy("key", acct.key)}>{copied === "key" ? "Copied" : "Copy"}</button></div>
+          <ol className="steps">
+            <li>In Orbinum Hub, unshield ORB to the address above.</li>
+            <li>In your wallet choose Import account and paste the private key.</li>
+            <li>Connect that account here, get tUSD, and trade.</li>
+          </ol>
+          <div className="warn">Testnet only. Never reuse this key on a real network, and never share it.</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CreateForm({ busy, makerBps, onSubmit }: { busy: boolean; makerBps: number; onSubmit: (isSell: boolean, price: bigint, orb: bigint) => void }) {
   const [isSell, setIsSell] = useState(true);
   const [price, setPrice] = useState("");
   const [amt, setAmt] = useState("");
@@ -310,8 +528,8 @@ function CreateForm({ busy, onSubmit }: { busy: boolean; onSubmit: (isSell: bool
       <div className="summary">
         {valid
           ? isSell
-            ? `Locks ${amt} ORB. You receive ${fmtPrice(cost(o, p))} ${QUOTE_SYMBOL} when filled.`
-            : `Locks ${fmtPrice(cost(o, p))} ${QUOTE_SYMBOL}. You receive ${amt} ORB when filled.`
+            ? `Locks ${amt} ORB. When filled you receive ${fmtPrice(cost(o, p) - feeOf(cost(o, p), makerBps))} ${QUOTE_SYMBOL} (price minus ${pct(makerBps)} maker fee).`
+            : `Locks ${fmtPrice(cost(o, p) + feeOf(cost(o, p), makerBps))} ${QUOTE_SYMBOL} (price plus ${pct(makerBps)} maker fee, unused fee is refunded on cancel). You receive ${amt} ORB (publicly) when filled.`
           : "Enter price and amount"}
       </div>
       <button className="btn" disabled={!valid || busy} onClick={() => onSubmit(isSell, p, o)}>Place order</button>

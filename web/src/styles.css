@@ -47,3 +47,17 @@ input { width: 100%; background: var(--bg); border: 1px solid var(--line); color
 .modal { position: fixed; inset: 0; background: #000a; display: grid; place-items: center; }
 .faq p { color: var(--muted); max-width: 720px; }
 a { color: var(--accent); }
+.banner.alert { background: #3a1216; color: #ff9aa5; }
+.card.wide { max-width: 640px; }
+.card { max-height: 90vh; overflow: auto; }
+textarea { width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--text); padding: 9px 10px; border-radius: 6px; font: 12px/1.4 ui-monospace, monospace; resize: vertical; }
+label.check { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 14px; margin: 14px 0 6px; }
+label.check input { width: auto; }
+.hint { color: var(--muted); font-size: 12.5px; margin: 8px 0 12px; }
+.err-text { color: var(--sell); font-size: 12.5px; margin-top: 4px; }
+.kv { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.kv span { color: var(--muted); }
+.copyrow { display: flex; align-items: center; gap: 10px; }
+.copyrow code, code { word-break: break-all; font: 12px/1.4 ui-monospace, monospace; }
+.steps { color: var(--muted); padding-left: 20px; }
+.warn { margin-top: 12px; padding: 10px 12px; border: 1px solid #5a4500; background: #2a2100; color: #ffd24d; border-radius: 6px; font-size: 13px; }

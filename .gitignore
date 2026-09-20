@@ -4,3 +4,5 @@ cache
 typechain-types
 dist
 .env
+last-note.json
+burner.json
