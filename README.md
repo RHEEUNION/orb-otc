@@ -20,7 +20,7 @@ Lock funds in escrow · fill orders in one transaction · no custody, no backend
 
 ## Overview
 
-ORB.OTC is modeled on the classic OTC board format used by Bittensor.Exchange for TAO: two columns of **Sell Orders** and **Buy Orders** showing price, volume and total, with a one-click button to take an order. Here the matching and custody are handled entirely by a smart contract on [Orbinum](https://github.com/orbinum), a privacy-focused Substrate + EVM (Frontier) Layer 1.
+ORB.OTC is a simple OTC board with two columns, **Sell Orders** and **Buy Orders**, showing price, volume and total, with a one-click button to take an order. Matching and custody are handled entirely by a smart contract on [Orbinum](https://github.com/orbinum), a privacy-focused Substrate + EVM (Frontier) Layer 1.
 
 | | Sell Orders | Buy Orders |
 |---|---|---|
@@ -49,6 +49,20 @@ ORB.OTC is modeled on the classic OTC board format used by Bittensor.Exchange fo
 ```
 
 **Pricing.** `price` is the number of tUSD base units (6 decimals) per 1 ORB (18 decimals). Amounts are computed with integer math; the payer's side is rounded up, so an order can never be under-funded.
+
+## Architecture
+
+<p align="center">
+  <img src="docs/architecture.svg" alt="ORB.OTC architecture: Web UI, EVM wallet, Orbinum RPC, OrbOTC contract and tUSD token" width="760">
+</p>
+
+| Component | Role |
+|---|---|
+| **Web UI** | React + viem app. Reads the order book through the RPC and builds transactions. Holds no keys and runs no server. |
+| **EVM Wallet** | Signs every transaction and adds or switches to chain 2700. |
+| **Orbinum RPC** | Public JSON-RPC endpoint used for reads (polled every 8s) and for broadcasting signed transactions. |
+| **OrbOTC Contract** | Escrows ORB and tUSD, matches fills, handles partial fills and cancels. |
+| **tUSD Token** | Test ERC-20 used as the quote asset, with a public faucet. |
 
 ## Network
 
