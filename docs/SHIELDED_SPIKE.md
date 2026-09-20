@@ -31,11 +31,28 @@ The dapp must never derive or hold a spending key, so it should only ever handle
 4. OrbOTC pays `shield(0, commitment, memo)` with the ORB amount instead of `call{value}`.
 5. Taker sees the note in Hub after a rescan.
 
+## Privacy address format (reverse-engineered, checksum verified)
+
+`orbpriv3:<0x owner Ax, big-endian>:<0x packed viewing pubkey, big-endian>:<8 hex checksum>`
+
+- checksum = first 4 bytes of `sha256("orbpriv3:<A>:<B>")` (matches the real address from Hub)
+- A is a valid BabyJubJub x-coordinate only when read big-endian; B unpacks to a usable point
+- Not documented publicly; derived from the value itself. Confirm with the Orbinum team before shipping.
+
+## Note construction (implemented in `spike/note.mjs`, JS only, public keys only)
+
+- `commitment = Poseidon4(value, assetId, ownerAx, blinding)` via `poseidon-lite`, sent on-chain as LE bytes (`commitmentHexOf`)
+- memo plaintext (120 B): `value_lo | value_hi | owner_pk LE | blinding LE | asset_id | counterparty(0) | circuit_version`
+- `ephSk` random, `shared = (ivkPoint * ephSk).x` LE, `key = SHA256(shared || commitment || "orbinum-note-encryption-v1")`
+- `ChaCha20-Poly1305(key, nonce12)` -> `nonce(12) | ct(120) | MAC(16) | ephPk packed LE(32)` = 180 B
+- Source of truth is `node/primitives/encrypted-memo`. `@orbinum/protocol-core` is **stale** (104-byte symmetric memo) and must not be used.
+- Offline self-test: build note for a throwaway keypair, decrypt back (value, owner, blinding, circuit version all match).
+
 ## Open items before building
 
-1. Exact format of the Hub "privacy address" / receiving info (docs: Keys & Identity, Payment Slips).
-2. A browser-usable Poseidon4 + memo encryption that matches the chain: build `protocol-core` WASM, or ask the team to publish it.
-3. Confirm a note created this way is recognised by Hub after rescan (needs a real Hub-generated address).
+1. ~~Format of the privacy address~~ reverse-engineered, see above; still worth confirming with the team.
+2. ~~Browser-usable crypto~~ done in JS with the SDK's own dependencies (no WASM needed).
+3. **Hub recognition:** a 0.02 ORB note was shielded to a real Hub address (tx `0xb446d578…ba02`, block 930207). Awaiting confirmation that it appears in the Hub vault after unlock/rescan.
 4. Explain the direct-EOA `shield` revert.
 5. Behaviour if the shield fails inside a fill: the whole fill must revert so no funds move (already true if the call result is required).
 
