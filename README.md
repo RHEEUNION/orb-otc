@@ -80,7 +80,7 @@ The interface takes its visual direction from the Orbinum website, and the Orbin
 
 ## For the team
 
-Contract deployment, hosting and release steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md). Compliance notes and limits of the operator controls are in [docs/COMPLIANCE.md](docs/COMPLIANCE.md).
+Contract deployment, hosting and release steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md). Compliance notes and limits of the operator controls are in [docs/COMPLIANCE.md](docs/COMPLIANCE.md). A full status report and the mainnet checklist (Korean) are in [docs/STATUS_AND_MAINNET.ko.md](docs/STATUS_AND_MAINNET.ko.md).
 
 ## Roadmap
 
