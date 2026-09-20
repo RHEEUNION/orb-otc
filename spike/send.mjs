@@ -14,7 +14,9 @@ const wallet = new ethers.Wallet(env.DEPLOYER_KEY, provider);
 const probe = new ethers.Contract(PROBE, ['function shieldTo(uint32,bytes32,bytes) payable'], wallet);
 
 const value = ethers.parseEther(amount);
-const note = buildShieldNote(addr, value);
+const opts = JSON.parse(process.argv[4] ?? '{}');
+console.log('variant:', JSON.stringify(opts));
+const note = buildShieldNote(addr, value, Number(NATIVE_ASSET_ID), opts);
 const { ownerPk } = parsePrivacyAddress(addr);
 console.log('commitment:', note.commitment);
 

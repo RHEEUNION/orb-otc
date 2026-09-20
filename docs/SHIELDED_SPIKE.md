@@ -52,9 +52,28 @@ The dapp must never derive or hold a spending key, so it should only ever handle
 
 1. ~~Format of the privacy address~~ reverse-engineered, see above; still worth confirming with the team.
 2. ~~Browser-usable crypto~~ done in JS with the SDK's own dependencies (no WASM needed).
-3. **Hub recognition:** a 0.02 ORB note was shielded to a real Hub address (tx `0xb446d578…ba02`, block 930207). Awaiting confirmation that it appears in the Hub vault after unlock/rescan.
+3. ~~Hub recognition~~ **Confirmed** (see Results below).
 4. Explain the direct-EOA `shield` revert.
 5. Behaviour if the shield fails inside a fill: the whole fill must revert so no funds move (already true if the call result is required).
+
+## Results (2026-09-21, Orbinum testnet, real Hub vault)
+
+Four notes were shielded to a real Hub privacy address, then found with the Hub's **Recover Notes** scan:
+
+| Note | Path | Address ivk read as | Found in Hub |
+|---|---|---|---|
+| 0.020 ORB | contract -> precompile | big-endian (wrong) | no |
+| 0.011 ORB | contract -> precompile | little-endian, no view tag | **yes** |
+| 0.013 ORB | contract -> precompile | little-endian + view tag | **yes** |
+| 0.012 ORB | EOA -> precompile | little-endian + view tag | **yes** |
+
+Conclusions:
+- A note shielded **by a contract** on behalf of another address is recognised by the Hub exactly like a direct shield. The Shielded Receive design works.
+- The viewing-key field of `orbpriv3` is packed bytes read **little-endian** (Hub: `unpackUsableViewingKey(bytesToBigintLE(fromHex(field)))`).
+- The view tag is not required on this testnet (activation leaf unset), but we still set it so notes stay valid if it is activated later.
+- Hub does **not** auto-scan. New notes appear only after the user runs *Recover Notes* (`···` menu in the Notes panel) or the *sync* banner. The UI must tell users this.
+- Hub's Activity tab lists the user's own transactions and notes with a known sender, so notes shielded by a third party do not appear there. Check the Shielded Pool notes list.
+- The Orbinum indexer is behind a Cloudflare bot check, so it cannot be read by scripts.
 
 ## Not possible
 

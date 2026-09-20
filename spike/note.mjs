@@ -20,6 +20,8 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
 const KEY_DOMAIN = new TextEncoder().encode('orbinum-note-encryption-v1');
+const VIEW_TAG_DOMAIN = new TextEncoder().encode('orbinum-view-tag-v1');
+export const viewTag = (shared) => sha256(new Uint8Array([...VIEW_TAG_DOMAIN, ...shared]))[0];
 const toHex = (u8) => '0x' + [...u8].map((b) => b.toString(16).padStart(2, '0')).join('');
 const randBytes = (n) => crypto.getRandomValues(new Uint8Array(n));
 const randScalar = (mod) => {
@@ -29,8 +31,8 @@ const randScalar = (mod) => {
   }
 };
 
-/** orbpriv3:<ownerAx 0x BE>:<packed ivk 0x BE>:<sha256("orbpriv3:A:B")[0..4] hex> */
-export function parsePrivacyAddress(text) {
+/** orbpriv3:<ownerAx scalar hex (BE)>:<packed ivk bytes hex, read as LE>:<sha256("orbpriv3:A:B")[0..4] hex> — matches Hub's PrivacyKeyManager */
+export function parsePrivacyAddress(text, opts = {}) {
   const parts = text.trim().split(':');
   if (parts.length !== 4 || parts[0] !== 'orbpriv3') throw new Error('Not an orbpriv3 privacy address');
   const [scheme, a, b, checksum] = parts;
@@ -40,14 +42,15 @@ export function parsePrivacyAddress(text) {
   if (expect !== checksum.toLowerCase()) throw new Error('Privacy address checksum mismatch');
   const ownerPk = BigInt(a);
   if (ownerPk === 0n || ownerPk >= BN254_R) throw new Error('Invalid owner key');
-  const ivk = unpackUsableViewingKey(BigInt(b));
+  const bBig = opts.ivkBE ? BigInt(b) : bytesToBigintLE(Uint8Array.from(b.slice(2).match(/../g).map((h) => parseInt(h, 16))));
+  const ivk = unpackUsableViewingKey(bBig);
   if (!ivk) throw new Error('Unusable viewing key');
   return { ownerPk, ivkPoint: ivk };
 }
 
 /** @returns {{commitment: string, memo: string, blinding: bigint, commitmentBig: bigint}} */
-export function buildShieldNote(privacyAddress, valueWei, assetId = Number(NATIVE_ASSET_ID)) {
-  const { ownerPk, ivkPoint } = parsePrivacyAddress(privacyAddress);
+export function buildShieldNote(privacyAddress, valueWei, assetId = Number(NATIVE_ASSET_ID), opts = {}) {
+  const { ownerPk, ivkPoint } = parsePrivacyAddress(privacyAddress, opts);
   const blinding = randScalar(BN254_R);
   const commitmentBig = poseidon4([valueWei, BigInt(assetId), ownerPk, blinding]);
 
@@ -74,6 +77,7 @@ export function buildShieldNote(privacyAddress, valueWei, assetId = Number(NATIV
   const shared = bigintTo32Le(fastMulPoint(ivkPoint, ephSk)[0]);
   const encKey = sha256(new Uint8Array([...shared, ...commitmentBytes, ...KEY_DOMAIN]));
   const nonce = randBytes(12);
+  nonce[0] = viewTag(shared); // scanners skip notes whose nonce[0] != view tag
   const ct = chacha20poly1305(encKey, nonce).encrypt(pt); // 120 + 16 MAC
   const memoBytes = new Uint8Array([...nonce, ...ct, ...bigintTo32Le(packPoint(ephPk))]);
   if (memoBytes.length !== 180) throw new Error('memo size ' + memoBytes.length);
