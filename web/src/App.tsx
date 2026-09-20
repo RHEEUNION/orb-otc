@@ -14,7 +14,8 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { DEPLOYED, erc20Abi, IS_V2, orbinumTestnet, otcAbi, OTC, PRIVATE_FILL_GAS, TEST_TOKEN } from "./chain";
 import { FEATURES } from "./features";
 import { cost, feeOf, fmtOrb, fmtQuote, pct, short, type Token } from "./format";
-import { Halftone, HexMark } from "./components/Hero";
+import { Halftone } from "./components/Hero";
+import { MetalLogo } from "./components/MetalLogo";
 import { StablecoinScan } from "./components/StablecoinScan";
 
 type Order = {
@@ -329,7 +330,7 @@ export default function App() {
               <button className="btn ghost" onClick={() => setTab("faq")}>How it works</button>
             </div>
           </div>
-          <HexMark />
+          <MetalLogo src={`${import.meta.env.BASE_URL}brand/orbinum-mark-white.svg`} />
         </section>
       )}
 

@@ -65,7 +65,7 @@ Connect MetaMask · post or take an order · settle on-chain in one transaction.
 
 ## Design credits
 
-The interface takes its visual direction from the Orbinum website. The Orbinum logo in the footer is the unmodified official asset, used under the [Orbinum brand guidelines](https://docs.orbinum.network/branding). ORB.OTC is an independent project and is not an official Orbinum product. The typeface is Instrument Sans (SIL Open Font License).
+The interface takes its visual direction from the Orbinum website. The Orbinum logo in the footer is the unmodified official asset, used under the [Orbinum brand guidelines](https://docs.orbinum.network/branding). The large mark in the hero is the same official shape rendered with an animated metallic effect. **The brand guidelines prohibit applying effects to the logo and using it in a way that implies official partnership unless Orbinum permits it.** Get written permission from the Orbinum team (contact through their homepage) before a public launch, or switch the hero back to the plain logo. ORB.OTC is an independent project and is not an official Orbinum product. The typeface is Instrument Sans (SIL Open Font License).
 
 ## Network
 

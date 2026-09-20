@@ -15,6 +15,7 @@
 }
 * { box-sizing: border-box; }
 html { color-scheme: dark; }
+#root { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 var(--font); -webkit-font-smoothing: antialiased; }
 a { color: var(--strong); text-underline-offset: 3px; }
 h1, h2, h3 { color: var(--strong); font-weight: 500; margin: 0; letter-spacing: -0.01em; }
@@ -76,8 +77,13 @@ code { font: 12.5px/1.45 var(--mono); word-break: break-all; color: var(--strong
 .hex-spin { transform-origin: 100px 100px; animation: spin 40s linear infinite; }
 .hex-core { fill: var(--strong) !important; animation: pulse 3.2s ease-in-out infinite; }
 
+/* ---------- metallic Orbinum mark ---------- */
+.metal { position: absolute; right: max(16px, calc((100vw - 1200px) / 2)); top: 50%; width: min(400px, 38vw); aspect-ratio: 500 / 577; transform: translateY(-50%); pointer-events: none; }
+.metal-fallback { background: linear-gradient(115deg, #6f757c 0%, #f4f6f9 28%, #858b92 48%, #ffffff 68%, #6a7077 100%); background-size: 240% 100%; animation: sheen 7s ease-in-out infinite alternate; -webkit-mask: var(--mark) center / contain no-repeat; mask: var(--mark) center / contain no-repeat; }
+@keyframes sheen { to { background-position: 100% 0; } }
+
 /* ---------- layout ---------- */
-main { max-width: 1200px; margin: 0 auto; padding: 32px 24px 56px; }
+main { width: 100%; max-width: 1200px; margin: 0 auto; padding: 32px 24px 56px; flex: 1 0 auto; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
 .grid > *, .stats > * { min-width: 0; }
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); margin-bottom: 24px; }
@@ -143,7 +149,7 @@ label.check input { width: 16px; height: 16px; accent-color: #fff; }
 .dots::after { content: ""; animation: dots 1.2s steps(4) infinite; }
 
 /* ---------- footer ---------- */
-.foot { border-top: 1px solid var(--line); padding: 22px 24px; }
+.foot { border-top: 1px solid var(--line); padding: 22px 24px; margin-top: auto; flex-shrink: 0; }
 .foot-in { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .built { display: inline-flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; }
 .built img { display: block; height: 18px; width: auto; opacity: 0.85; transition: opacity 0.2s; }
@@ -170,7 +176,7 @@ label.check input { width: 16px; height: 16px; accent-color: #fff; }
   .stats { grid-template-columns: repeat(2, 1fr); }
   .stat:nth-child(2) { border-right: 0; }
   .stat:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
-  .hexmark { opacity: 0.35; width: 55vw; right: -10vw; }
+  .metal { opacity: 0.4; width: 62vw; right: -14vw; }
 }
 @media (max-width: 640px) {
   .top { gap: 12px; padding: 12px 16px; }
