@@ -5,6 +5,9 @@
 //   node scripts/admin.mjs unblock 0xabc...
 //   node scripts/admin.mjs check 0xabc...
 //   node scripts/admin.mjs transfer-owner 0xnewOwner
+//   node scripts/admin.mjs set-fees <makerBps> <takerBps>   (100 bps = 1%, cap 100)
+//   node scripts/admin.mjs set-fee-recipient 0xaddr          (0x000... turns fees off)
+//   node scripts/admin.mjs claim-fees                        (sends accrued fees to the recipient)
 import { readFileSync } from "node:fs";
 import { ethers } from "ethers";
 
@@ -31,7 +34,16 @@ const addrs = () => {
 
 switch (cmd) {
   case "status":
-    console.log({ contract: dep.otcV2, owner: await otc.owner(), paused: await otc.paused(), you: signer.address });
+    console.log({
+      contract: dep.otcV2,
+      owner: await otc.owner(),
+      paused: await otc.paused(),
+      you: signer.address,
+      makerFeeBps: Number(await otc.makerFeeBps()),
+      takerFeeBps: Number(await otc.takerFeeBps()),
+      feeRecipient: await otc.feeRecipient(),
+      accruedFeesTUsd: ethers.formatUnits(await otc.accruedFees(), 6),
+    });
     break;
   case "pause":
     await send("paused", otc.pause());
@@ -53,6 +65,20 @@ switch (cmd) {
     await send(`ownership moved to ${to}`, otc.transferOwnership(to));
     break;
   }
+  case "set-fees": {
+    const [m, t] = args.map(Number);
+    if (!Number.isInteger(m) || !Number.isInteger(t)) throw new Error("Usage: set-fees <makerBps> <takerBps>");
+    await send(`fees set to maker ${m} bps, taker ${t} bps`, otc.setFees(m, t));
+    break;
+  }
+  case "set-fee-recipient": {
+    const [to] = args.length ? args : [ethers.ZeroAddress];
+    await send(`fee recipient set to ${ethers.getAddress(to)}`, otc.setFeeRecipient(ethers.getAddress(to)));
+    break;
+  }
+  case "claim-fees":
+    await send("fees claimed", otc.claimFees());
+    break;
   default:
-    console.log("Usage: status | pause | unpause | block <addr...> | unblock <addr...> | check <addr...> | transfer-owner <addr>");
+    console.log("Usage: status | pause | unpause | block <addr...> | unblock <addr...> | check <addr...> | transfer-owner <addr> | set-fees <maker> <taker> | set-fee-recipient <addr> | claim-fees");
 }

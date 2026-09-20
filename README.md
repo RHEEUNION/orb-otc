@@ -35,7 +35,7 @@ Connect MetaMask · post or take an order · settle on-chain in one transaction.
 
 - **Non-custodial escrow.** Funds sit in the OrbOTC smart contract, never with us. They move only when an order is filled or its maker cancels.
 - **Cancel anytime.** Unfilled escrow goes straight back to the maker.
-- **No fees** on testnet, other than gas paid in ORB.
+- **Fees** are charged in tUSD on the trade amount: taker 0.20%, maker 0.10% (the maker rate is fixed when the order is placed). The contract caps each side at 1.00%. Gas is paid in ORB.
 - **No account, no sign-up.** Your wallet is your login.
 - **Operator controls never touch your funds.** The operator can pause new trading or block specific addresses from new trades, but cancelling your own order always works.
 
@@ -86,5 +86,6 @@ Contract deployment, hosting and release steps are in [docs/OPERATIONS.md](docs/
 - [x] Operator pause and blocklist, one-time address tool, trade receipts
 - [ ] Private receive for buy orders (needs a per-order privacy address)
 - [ ] Automated sanctions screening and multisig admin
+- [ ] Mainnet stablecoins (USDT/USDC) with cross-network funding and payout, see [docs/CROSSCHAIN.md](docs/CROSSCHAIN.md)
 - [ ] Order expiry and minimum fill size
 - [ ] Security audit and mainnet launch

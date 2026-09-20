@@ -7,31 +7,42 @@ interface IERC20 {
 }
 
 /// @title OrbOTCV2
-/// @notice Escrow order book: native ORB <-> one ERC-20 quote token, with two additions over v1:
+/// @notice Escrow order book: native ORB <-> one ERC-20 quote token, with three additions over v1:
 ///         1. Private receive: a taker filling a sell order can have the ORB paid into a shielded note
 ///            (Orbinum ShieldedPool precompile) instead of a public transfer.
 ///         2. Operator controls: pause and blocklist for new trading. Cancelling an order is ALWAYS possible,
 ///            and no admin function can move or hold user funds.
+///         3. Fees on the quote (stablecoin) leg: a maker fee locked into the order when it is placed, and a taker
+///            fee at the rate in force when the order is filled. Both are capped at MAX_FEE_BPS.
 /// @dev Testnet build, unaudited. Price = quote base units per 1 ORB (1e18 wei). Partial fills allowed.
 contract OrbOTCV2 {
     struct Order {
         address maker;
         bool isSell; // true: maker sells ORB for quote; false: maker buys ORB with quote
         bool open;
+        uint16 makerFeeBps; // maker fee rate locked when the order was placed
         uint256 price; // quote base units per 1e18 wei ORB
         uint256 remainingOrb; // wei of ORB still to trade
         uint256 remainingQuote; // buy orders only: quote still escrowed
+        uint256 remainingFee; // buy orders only: maker fee still escrowed (on top of remainingQuote)
     }
 
     /// Orbinum ShieldedPool precompile (node: precompiles.rs hash(2049)).
     address public constant SHIELDED_POOL = 0x0000000000000000000000000000000000000801;
     uint32 public constant NATIVE_ASSET_ID = 0;
     uint256 public constant MEMO_SIZE = 180;
+    uint16 public constant MAX_FEE_BPS = 100; // 1.00% per side, hard cap
+    uint256 private constant BPS = 10_000;
 
     IERC20 public immutable quote;
     address public owner;
     bool public paused;
     mapping(address => bool) public blocked;
+
+    uint16 public makerFeeBps;
+    uint16 public takerFeeBps;
+    address public feeRecipient; // address(0) disables fees
+    uint256 public accruedFees; // quote token owed to feeRecipient, claimed with claimFees()
 
     uint256 public nextOrderId;
     mapping(uint256 => Order) public orders;
@@ -60,18 +71,28 @@ contract OrbOTCV2 {
     event OrderCreated(uint256 indexed id, address indexed maker, bool isSell, uint256 price, uint256 orbAmount);
     event OrderFilled(uint256 indexed id, address indexed taker, uint256 orbAmount, uint256 quoteAmount, bool privateReceive);
     event OrderCancelled(uint256 indexed id);
+    event FeeCharged(uint256 indexed id, uint256 makerFee, uint256 takerFee);
+    event FeesUpdated(uint16 makerFeeBps, uint16 takerFeeBps);
+    event FeeRecipientUpdated(address indexed recipient);
+    event FeesClaimed(address indexed recipient, uint256 amount);
     event Paused(address indexed by);
     event Unpaused(address indexed by);
     event BlockedSet(address indexed account, bool isBlocked, address indexed by);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
-    constructor(address quoteToken) {
+    constructor(address quoteToken, address feeRecipient_, uint16 makerFeeBps_, uint16 takerFeeBps_) {
+        require(makerFeeBps_ <= MAX_FEE_BPS && takerFeeBps_ <= MAX_FEE_BPS, "fee too high");
         quote = IERC20(quoteToken);
         owner = msg.sender;
+        feeRecipient = feeRecipient_;
+        makerFeeBps = makerFeeBps_;
+        takerFeeBps = takerFeeBps_;
         emit OwnershipTransferred(address(0), msg.sender);
+        emit FeeRecipientUpdated(feeRecipient_);
+        emit FeesUpdated(makerFeeBps_, takerFeeBps_);
     }
 
-    // ---------------------------------------------------------------- admin (cannot touch funds)
+    // ---------------------------------------------------------------- admin (cannot touch user funds)
 
     function pause() external onlyOwner {
         paused = true;
@@ -98,7 +119,43 @@ contract OrbOTCV2 {
         owner = newOwner;
     }
 
+    /// Change fee rates. The maker rate only affects orders placed afterwards; the taker rate applies to later fills.
+    function setFees(uint16 makerBps, uint16 takerBps) external onlyOwner {
+        require(makerBps <= MAX_FEE_BPS && takerBps <= MAX_FEE_BPS, "fee too high");
+        makerFeeBps = makerBps;
+        takerFeeBps = takerBps;
+        emit FeesUpdated(makerBps, takerBps);
+    }
+
+    /// Set who receives fees. address(0) turns fees off for new orders and fills.
+    function setFeeRecipient(address recipient) external onlyOwner {
+        feeRecipient = recipient;
+        emit FeeRecipientUpdated(recipient);
+    }
+
+    /// Send all accrued fees to the fee recipient. Anyone may call it; funds only ever go to the recipient.
+    function claimFees() external nonReentrant {
+        address to = feeRecipient;
+        uint256 amt = accruedFees;
+        require(to != address(0) && amt > 0, "nothing to claim");
+        accruedFees = 0;
+        _push(to, amt);
+        emit FeesClaimed(to, amt);
+    }
+
     // ---------------------------------------------------------------- helpers
+
+    function _effMakerBps() internal view returns (uint16) {
+        return feeRecipient == address(0) ? 0 : makerFeeBps;
+    }
+
+    function _effTakerBps() internal view returns (uint256) {
+        return feeRecipient == address(0) ? 0 : takerFeeBps;
+    }
+
+    function _fee(uint256 amount, uint256 bps) internal pure returns (uint256) {
+        return (amount * bps) / BPS;
+    }
 
     function _cost(uint256 orbAmount, uint256 price, bool roundUp) internal pure returns (uint256) {
         uint256 p = orbAmount * price;
@@ -139,25 +196,27 @@ contract OrbOTCV2 {
     function createSellOrder(uint256 price) external payable nonReentrant tradingAllowed returns (uint256 id) {
         require(msg.value > 0 && price > 0, "bad params");
         id = nextOrderId++;
-        orders[id] = Order(msg.sender, true, true, price, msg.value, 0);
+        orders[id] = Order(msg.sender, true, true, _effMakerBps(), price, msg.value, 0, 0);
         emit OrderCreated(id, msg.sender, true, price, msg.value);
     }
 
-    /// @notice Buy ORB: escrow quote for `orbAmount` at `price` (requires prior approve).
+    /// @notice Buy ORB: escrow quote (plus the maker fee) for `orbAmount` at `price` (requires prior approve).
     function createBuyOrder(uint256 price, uint256 orbAmount) external nonReentrant tradingAllowed returns (uint256 id) {
         require(orbAmount > 0 && price > 0, "bad params");
         uint256 q = _cost(orbAmount, price, true);
         require(q > 0, "too small");
-        _pull(msg.sender, q);
+        uint16 mBps = _effMakerBps();
+        uint256 mFee = _fee(q, mBps);
+        _pull(msg.sender, q + mFee);
         id = nextOrderId++;
-        orders[id] = Order(msg.sender, false, true, price, orbAmount, q);
+        orders[id] = Order(msg.sender, false, true, mBps, price, orbAmount, q, mFee);
         emit OrderCreated(id, msg.sender, false, price, orbAmount);
     }
 
     // ---------------------------------------------------------------- fill
 
-    function _takeSell(uint256 id, uint256 orbAmount) internal returns (Order storage o, uint256 q) {
-        o = orders[id];
+    function _takeSell(uint256 id, uint256 orbAmount) internal returns (uint256 q) {
+        Order storage o = orders[id];
         require(o.open && o.isSell, "not fillable");
         require(!blocked[o.maker], "maker blocked");
         require(orbAmount > 0 && orbAmount <= o.remainingOrb, "bad amount");
@@ -165,13 +224,19 @@ contract OrbOTCV2 {
         require(q > 0, "too small");
         o.remainingOrb -= orbAmount;
         if (o.remainingOrb == 0) o.open = false;
-        _pull(msg.sender, q);
-        _push(o.maker, q);
+        uint256 mFee = _fee(q, o.makerFeeBps);
+        uint256 tFee = _fee(q, _effTakerBps());
+        _pull(msg.sender, q + tFee); // taker pays the price plus the taker fee
+        _push(o.maker, q - mFee); // maker receives the price minus the maker fee
+        if (mFee + tFee > 0) {
+            accruedFees += mFee + tFee;
+            emit FeeCharged(id, mFee, tFee);
+        }
     }
 
     /// @notice Take (part of) a sell order: pay quote, receive ORB publicly.
     function fillSellOrder(uint256 id, uint256 orbAmount) external nonReentrant tradingAllowed {
-        (, uint256 q) = _takeSell(id, orbAmount);
+        uint256 q = _takeSell(id, orbAmount);
         _sendOrb(msg.sender, orbAmount);
         emit OrderFilled(id, msg.sender, orbAmount, q, false);
     }
@@ -185,7 +250,7 @@ contract OrbOTCV2 {
         nonReentrant
         tradingAllowed
     {
-        (, uint256 q) = _takeSell(id, orbAmount);
+        uint256 q = _takeSell(id, orbAmount);
         _shieldOrb(orbAmount, commitment, memo);
         emit OrderFilled(id, msg.sender, orbAmount, q, true);
     }
@@ -197,27 +262,37 @@ contract OrbOTCV2 {
         require(!blocked[o.maker], "maker blocked");
         uint256 orbAmount = msg.value;
         require(orbAmount > 0 && orbAmount <= o.remainingOrb, "bad amount");
-        uint256 q = orbAmount == o.remainingOrb ? o.remainingQuote : _cost(orbAmount, o.price, false);
+        bool last = orbAmount == o.remainingOrb;
+        uint256 q = last ? o.remainingQuote : _cost(orbAmount, o.price, false);
         require(q > 0 && q <= o.remainingQuote, "too small");
+        // The maker fee escrowed at creation is released in proportion to the fill (exact on the last fill).
+        uint256 mFee = last ? o.remainingFee : (o.remainingFee * orbAmount) / o.remainingOrb;
+        uint256 tFee = _fee(q, _effTakerBps());
         o.remainingOrb -= orbAmount;
         o.remainingQuote -= q;
+        o.remainingFee -= mFee;
         if (o.remainingOrb == 0) o.open = false;
         _sendOrb(o.maker, orbAmount);
-        _push(msg.sender, q);
+        _push(msg.sender, q - tFee); // taker receives the price minus the taker fee
+        if (mFee + tFee > 0) {
+            accruedFees += mFee + tFee;
+            emit FeeCharged(id, mFee, tFee);
+        }
         emit OrderFilled(id, msg.sender, orbAmount, q, false);
     }
 
     // ---------------------------------------------------------------- cancel (never restricted)
 
-    /// @notice Cancel your own order and get the escrow back. Works while paused or blocked.
+    /// @notice Cancel your own order and get the escrow (and unused maker fee) back. Works while paused or blocked.
     function cancelOrder(uint256 id) external nonReentrant {
         Order storage o = orders[id];
         require(o.open && o.maker == msg.sender, "not cancellable");
         o.open = false;
         uint256 orb = o.remainingOrb;
-        uint256 q = o.remainingQuote;
+        uint256 q = o.remainingQuote + o.remainingFee;
         o.remainingOrb = 0;
         o.remainingQuote = 0;
+        o.remainingFee = 0;
         if (o.isSell) _sendOrb(msg.sender, orb);
         else _push(msg.sender, q);
         emit OrderCancelled(id);

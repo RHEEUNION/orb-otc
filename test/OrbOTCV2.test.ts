@@ -10,13 +10,14 @@ const memo = ethers.hexlify(ethers.randomBytes(180));
 async function setup() {
   const [admin, maker, taker, other] = await ethers.getSigners();
   const usd = await ethers.deployContract("MockUSD");
-  const otc = await ethers.deployContract("OrbOTCV2", [await usd.getAddress()]);
+  const otc = await ethers.deployContract("OrbOTCV2", [await usd.getAddress(), ethers.ZeroAddress, 0, 0]);
 
   // put a mock shielded pool at the precompile address
   const mock = await ethers.deployContract("MockShieldedPool");
   const code = await ethers.provider.getCode(await mock.getAddress());
   await network.provider.send("hardhat_setCode", [POOL, code]);
   const pool = await ethers.getContractAt("MockShieldedPool", POOL);
+  await pool.setFailNext(false); // storage at POOL survives setCode
 
   for (const s of [maker, taker, other]) {
     await usd.connect(s).faucet();

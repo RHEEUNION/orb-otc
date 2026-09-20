@@ -33,6 +33,7 @@ Redeploying creates a fresh, empty order book, so only do it when the contract c
 
 ```bash
 npx hardhat run scripts/deploy-v2.ts --network orbinumTestnet   # deploys OrbOTCV2, adds `otcV2` to web/src/deployment.json
+# fee settings: FEE_RECIPIENT, MAKER_FEE_BPS (default 10), TAKER_FEE_BPS (default 20) as environment variables
 ```
 
 The site uses `otcV2` when present and falls back to `otc` (v1). Deploying v2 does not touch v1.
@@ -47,6 +48,9 @@ node scripts/admin.mjs block 0xabc... 0xdef...
 node scripts/admin.mjs unblock 0xabc...
 node scripts/admin.mjs check 0xabc...
 node scripts/admin.mjs transfer-owner 0xMultisig...   # do this before mainnet
+node scripts/admin.mjs set-fees 10 20                 # maker and taker in basis points (100 = 1%, cap 100)
+node scripts/admin.mjs set-fee-recipient 0xabc...     # 0x000... turns fees off
+node scripts/admin.mjs claim-fees                     # send accrued fees to the recipient
 ```
 
 See `docs/COMPLIANCE.md` for what these controls are for and their limits.

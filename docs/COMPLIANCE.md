@@ -28,10 +28,25 @@ Because price, size, the tUSD leg and the trading address stay public, trades re
 | `setBlocked(addresses, true/false)` | Blocks addresses from creating or filling; also blocks filling an order whose maker is blocked | Reversible, batchable, emits `BlockedSet` events |
 | `transferOwnership(addr)` | Moves admin rights (use a multisig on mainnet) | |
 | `cancelOrder(id)` | Always works, even when paused or blocked | Users can always recover escrow |
+| `setFees`, `setFeeRecipient`, `claimFees` | Platform fees, see below | Capped at 1.00% per side by the contract |
 
 By design no admin function can move, hold or seize user funds. It only stops new trading.
 
 Operate it with `node scripts/admin.mjs` (see `docs/OPERATIONS.md`).
+
+## Fees
+
+| | Rule |
+|---|---|
+| Base | The quote amount of each fill (tUSD on testnet, USDT/USDC on mainnet) |
+| Taker fee | Paid on top of the price by the taker of a sell order, or deducted from the price when the taker fills a buy order. Uses the rate in force at fill time |
+| Maker fee | Deducted from the price the maker receives (sell order), or escrowed on top of the price (buy order). **Locked when the order is placed**, so a later rate change never affects an existing order |
+| Testnet rates | Maker 0.10%, taker 0.20% |
+| Cap | 1.00% per side, enforced by the contract |
+| Recipient | An EVM address (a privacy address cannot receive an ERC-20). Testnet: `0x3937B5F83f8e3DB413bD202bAf4da5A64879690F` |
+| Payout | Fees accrue inside the contract and `claimFees()` sends them to the recipient. This keeps a blacklisted recipient from blocking trades |
+
+Unused maker-fee escrow on a buy order is refunded when the order is cancelled. Fees are always in the quote token, so fee revenue is public and auditable.
 
 ## Proof for the trader ("소명")
 

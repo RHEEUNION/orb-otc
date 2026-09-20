@@ -38,7 +38,10 @@ export const otcAbi = parseAbi([
   "function nextOrderId() view returns (uint256)",
   "function paused() view returns (bool)",
   "function blocked(address) view returns (bool)",
-  "function getOrders(uint256 from, uint256 limit) view returns (uint256[] ids, (address maker, bool isSell, bool open, uint256 price, uint256 remainingOrb, uint256 remainingQuote)[] list)",
+  "function makerFeeBps() view returns (uint16)",
+  "function takerFeeBps() view returns (uint16)",
+  "function feeRecipient() view returns (address)",
+  "function getOrders(uint256 from, uint256 limit) view returns (uint256[] ids, (address maker, bool isSell, bool open, uint16 makerFeeBps, uint256 price, uint256 remainingOrb, uint256 remainingQuote, uint256 remainingFee)[] list)",
 ]);
 
 export const erc20Abi = parseAbi([
