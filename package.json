@@ -1,6 +1,7 @@
 {
   "name": "orb-otc",
   "private": true,
+  "license": "UNLICENSED",
   "version": "0.1.0",
   "description": "Testnet-only ORB OTC order book on Orbinum (EVM escrow)",
   "scripts": {
