@@ -4,10 +4,11 @@ import deployment from "../web/src/deployment.json";
 // Posts a few sample orders so a fresh demo order book is not empty.
 async function main() {
   const usd = await ethers.getContractAt("MockUSD", deployment.quote);
-  const otc = await ethers.getContractAt("OrbOTC", deployment.otc);
+  const otcAddress = (deployment as { otcV2?: string }).otcV2 ?? deployment.otc;
+  const otc = await ethers.getContractAt((deployment as { otcV2?: string }).otcV2 ? "OrbOTCV2" : "OrbOTC", otcAddress);
   const [me] = await ethers.getSigners();
-  if ((await usd.allowance(me.address, deployment.otc)) < ethers.parseUnits("1000", 6)) {
-    await (await usd.approve(deployment.otc, ethers.MaxUint256)).wait();
+  if ((await usd.allowance(me.address, otcAddress)) < ethers.parseUnits("1000", 6)) {
+    await (await usd.approve(otcAddress, ethers.MaxUint256)).wait();
   }
 
   const sells: [string, string][] = [["1.20", "0.30"], ["1.35", "0.50"], ["1.50", "0.25"], ["1.80", "0.40"]];

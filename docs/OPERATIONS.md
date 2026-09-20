@@ -29,6 +29,28 @@ Run by an operator, never by users.
 
 Redeploying creates a fresh, empty order book, so only do it when the contract changes.
 
+## Contract v2 (private receive, pause, blocklist)
+
+```bash
+npx hardhat run scripts/deploy-v2.ts --network orbinumTestnet   # deploys OrbOTCV2, adds `otcV2` to web/src/deployment.json
+```
+
+The site uses `otcV2` when present and falls back to `otc` (v1). Deploying v2 does not touch v1.
+
+Operator commands (run with the owner key in `.env`):
+
+```bash
+node scripts/admin.mjs status
+node scripts/admin.mjs pause            # stop new orders and fills; cancel still works
+node scripts/admin.mjs unpause
+node scripts/admin.mjs block 0xabc... 0xdef...
+node scripts/admin.mjs unblock 0xabc...
+node scripts/admin.mjs check 0xabc...
+node scripts/admin.mjs transfer-owner 0xMultisig...   # do this before mainnet
+```
+
+See `docs/COMPLIANCE.md` for what these controls are for and their limits.
+
 ## Build and host the site
 
 The site is fully static and needs no server.
