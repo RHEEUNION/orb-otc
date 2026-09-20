@@ -52,20 +52,21 @@ Connect MetaMask · post or take an order · settle on-chain in one transaction.
 ## Architecture
 
 <p align="center">
-  <img src="docs/architecture.svg" alt="ORB.OTC architecture: Web UI, EVM wallet, Orbinum RPC, OrbOTC contract and tUSD token" width="760">
+  <img src="docs/architecture.svg" alt="ORB.OTC architecture: wallets and the web UI talk to the Orbinum RPC, which reaches the OrbOTCV2 escrow contract, its quote tokens and the ShieldedPool precompile; the operator administers the contract; a multichain balance scanner is prepared for mainnet" width="900">
 </p>
 
 | Component | Role |
 |---|---|
-| **Web UI** | React + viem app. Reads the order book through the RPC and builds transactions. Holds no keys. |
-| **EVM Wallet** | Signs every transaction and adds or switches to chain 2700. |
-| **Orbinum RPC** | JSON-RPC endpoint used for reads (polled every 8s) and for broadcasting signed transactions. |
-| **OrbOTC Contract** | Escrows ORB and tUSD, matches fills, handles partial fills and cancels. |
-| **tUSD Token** | Test ERC-20 quote asset with a public faucet. |
-
-## Design credits
-
-The interface takes its visual direction from the Orbinum website, and the Orbinum mark is used with Orbinum's permission. The liquid-metal rendering of the mark follows the MetallicPaint technique (React Bits, MIT + Commons Clause, https://reactbits.dev). The typeface is Instrument Sans (SIL Open Font License).
+| **Web UI** | Static React + viem site with no backend. Reads the order book through the RPC (every 8 seconds) and builds transactions. Holds no keys and no funds. |
+| **Wallets** | Any EIP-6963 browser wallet (MetaMask, Rabby, Talisman, Coinbase, OKX, Trust, ...). Signs every transaction, shares one or more accounts, and adds or switches to the Orbinum network. |
+| **Browser modules** | Runs only in the browser: the shielded-note builder (uses the recipient's public privacy address, never a spending key), trade receipts with disclosure keys, the one-time address generator and the multichain balance scanner. |
+| **Orbinum RPC** | JSON-RPC endpoint used for reads and for broadcasting signed transactions. |
+| **OrbOTCV2 contract** | Escrows ORB and quote tokens, handles partial fills and cancels, charges maker and taker fees per quote token, keeps the quote-token whitelist, and supports pause, blocklist and private fills. Cancelling is always possible. |
+| **Quote tokens** | The whitelisted stablecoins: tUSD (a test token) on testnet, USDT and USDC on mainnet. |
+| **ShieldedPool precompile** | Orbinum's `0x…0801`. A private fill pays the ORB into a shielded note through `shield(commitment, memo)` instead of a public transfer. |
+| **Orbinum Hub** | Where the buyer finds the note: Shielded Pool → Recover Notes. |
+| **Operator** | Administers the contract with the admin CLI (pause, blocklist, fees, quote tokens, ownership). Moves to a multisig for mainnet. Cannot move user funds. |
+| **Other EVM networks** | Prepared for mainnet and switched off: the scanner reads USDT and USDC balances on Ethereum, BNB Chain, Arbitrum, Base and Polygon through public RPCs. |
 
 ## Network
 

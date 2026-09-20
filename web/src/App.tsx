@@ -85,6 +85,7 @@ export default function App() {
   const [walletName, setWalletName] = useState("");
   const [walletIcon, setWalletIcon] = useState<string | undefined>();
   const [chooser, setChooser] = useState(false);
+  const [accounts, setAccounts] = useState<Address[]>([]); // every account the connected wallet shares with this site
   useEffect(() => () => cleanupRef.current(), []);
 
   const enabledTokens = useMemo(() => tokens.filter((t) => t.enabled), [tokens]);
@@ -239,6 +240,7 @@ export default function App() {
     cleanupRef.current = () => {};
     providerRef.current = null;
     setAccount(null);
+    setAccounts([]);
     setWalletName("");
     setWalletIcon(undefined);
     setOrbBal(0n);
@@ -266,13 +268,15 @@ export default function App() {
       cleanupRef.current(); // detach from a previously connected wallet
       providerRef.current = p;
       const onAccounts = (accs: string[]) => {
-        if (!accs?.length) clearSession();
-        else setAccount(accs[0] as Address);
+        if (!accs?.length) return clearSession();
+        setAccounts(accs as Address[]);
+        setAccount((cur) => (cur && accs.some((x) => sameAddr(x, cur)) ? cur : (accs[0] as Address)));
       };
       p.on?.("accountsChanged", onAccounts);
       cleanupRef.current = () => p.removeListener?.("accountsChanged", onAccounts);
       setWalletName(w.name);
       setWalletIcon(w.icon);
+      setAccounts(accounts as Address[]);
       setAccount(accounts[0] as Address);
       toasts.push({ kind: "success", title: "Wallet connected", detail: `${w.name} · ${short(accounts[0])}` });
     } catch (e: any) {
@@ -467,6 +471,11 @@ export default function App() {
             walletIcon={walletIcon}
             balances={`${fmtOrb(orbBal)} ORB${selected ? ` · ${fmtQuote(tokBal, selected, 0, 2)} ${selected.symbol}` : ""}`}
             explorerUrl={`${orbinumTestnet.blockExplorers.default.url}/address/${account}`}
+            accounts={accounts}
+            onSelectAccount={(a) => {
+              setAccount(a as Address);
+              toasts.push({ kind: "info", title: "Account switched", detail: short(a) });
+            }}
             onSwitch={() => setChooser(true)}
             onDisconnect={disconnect}
           />

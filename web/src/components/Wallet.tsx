@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Detected } from "../wallets";
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 function WalletIcon({ src }: { src?: string }) {
   return src ? <img className="wallet-icon" src={src} alt="" width={28} height={28} /> : <span className="wallet-icon fallback" aria-hidden="true" />;
@@ -35,7 +36,10 @@ export function WalletModal({ wallets, onPick, onClose }: { wallets: Detected[];
             ))}
           </ul>
         )}
-        <p className="hint">You choose the account in your wallet. Connecting does not sign or send anything.</p>
+        <p className="hint">
+          {wallets.length > 0 ? `${wallets.length} wallet${wallets.length === 1 ? "" : "s"} detected in this browser. ` : ""}
+          You choose the account in your wallet. Wallets such as Rabby and Talisman switch accounts inside the wallet itself: change the active account there and this page follows automatically. Connecting does not sign or send anything.
+        </p>
         <div className="actions">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
         </div>
@@ -45,7 +49,7 @@ export function WalletModal({ wallets, onPick, onClose }: { wallets: Detected[];
 }
 
 /** The connected wallet button: address, with copy, explorer link, switch and disconnect. */
-export function WalletMenu({ address, walletName, walletIcon, balances, explorerUrl, onSwitch, onDisconnect }: { address: string; walletName: string; walletIcon?: string; balances: string; explorerUrl: string; onSwitch: () => void; onDisconnect: () => void }) {
+export function WalletMenu({ address, accounts, walletName, walletIcon, balances, explorerUrl, onSelectAccount, onSwitch, onDisconnect }: { address: string; accounts: string[]; walletName: string; walletIcon?: string; balances: string; explorerUrl: string; onSelectAccount: (a: string) => void; onSwitch: () => void; onDisconnect: () => void }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -86,6 +90,17 @@ export function WalletMenu({ address, walletName, walletIcon, balances, explorer
             <code>{address}</code>
             {balances && <span>{balances}</span>}
           </div>
+          {accounts.length > 1 && (
+            <div className="menu-accounts" role="group" aria-label="Accounts shared by this wallet">
+              <span className="menu-label">Accounts shared by {walletName}</span>
+              {accounts.map((a) => (
+                <button key={a} role="menuitemradio" aria-checked={same(a, address)} className={same(a, address) ? "on" : ""} onClick={() => { setOpen(false); if (!same(a, address)) onSelectAccount(a); }}>
+                  <code>{short(a)}</code>
+                  {same(a, address) && <em>active</em>}
+                </button>
+              ))}
+            </div>
+          )}
           <button role="menuitem" onClick={copy}>{copied ? "Copied" : "Copy address"}</button>
           <a role="menuitem" href={explorerUrl} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}>View on explorer</a>
           <button role="menuitem" onClick={() => { setOpen(false); onSwitch(); }}>Switch wallet or account</button>

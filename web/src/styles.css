@@ -178,6 +178,12 @@ label.check input { width: 16px; height: 16px; accent-color: #fff; }
 .menu > :last-child { border-bottom: 0; }
 .menu button:hover, .menu a:hover { background: var(--hover); color: var(--strong); }
 .menu .danger { color: var(--sell); }
+.menu-accounts { border-bottom: 1px solid var(--line); }
+.menu-label { display: block; padding: 10px 16px 4px; color: var(--muted); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
+.menu-accounts button { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 0; }
+.menu-accounts button code { color: inherit; }
+.menu-accounts button em { font-style: normal; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--buy); }
+.menu-accounts button.on { color: var(--strong); background: var(--hover); }
 @media (max-width: 640px) { .menu { position: fixed; left: 16px; right: 16px; top: 64px; width: auto; } }
 
 /* ---------- multichain scan ---------- */
