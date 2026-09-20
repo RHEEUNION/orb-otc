@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createPublicClient,
   createWalletClient,
@@ -18,6 +18,8 @@ import { Halftone } from "./components/Hero";
 import { MetalLogo } from "./components/MetalLogo";
 import { StablecoinScan } from "./components/StablecoinScan";
 import { ToastStack, useToasts } from "./components/Toasts";
+import { WalletMenu, WalletModal } from "./components/Wallet";
+import { useWallets, withLegacy, type Detected, type Eip1193 } from "./wallets";
 
 type Order = {
   id: bigint;
@@ -54,7 +56,6 @@ type Receipt = {
 };
 
 const pub = createPublicClient({ chain: orbinumTestnet, transport: http() });
-const eth = () => (window as any).ethereum;
 const explorerTx = (h: string) => `${orbinumTestnet.blockExplorers.default.url}/tx/${h}`;
 const sameAddr = (a?: string, b?: string) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
 const TAB_LABEL: Record<Tab, string> = { market: "Order book", mine: "My orders", create: "New order", onetime: "One-time address", faq: "FAQ" };
@@ -78,6 +79,13 @@ export default function App() {
   const [isBlocked, setIsBlocked] = useState(false);
   const [fees, setFees] = useState({ maker: 0, taker: 0 });
   const [stale, setStale] = useState(false); // a newer build of the site has been published
+  const detected = useWallets();
+  const providerRef = useRef<Eip1193 | null>(null);
+  const cleanupRef = useRef<() => void>(() => {});
+  const [walletName, setWalletName] = useState("");
+  const [walletIcon, setWalletIcon] = useState<string | undefined>();
+  const [chooser, setChooser] = useState(false);
+  useEffect(() => () => cleanupRef.current(), []);
 
   const enabledTokens = useMemo(() => tokens.filter((t) => t.enabled), [tokens]);
   const tokenOf = useCallback((a?: string) => tokens.find((t) => sameAddr(t.address, a)), [tokens]);
@@ -202,14 +210,17 @@ export default function App() {
   }, [loadOrders, loadTokens]);
   useEffect(() => { loadBalances().catch(() => {}); }, [loadBalances, orders]);
 
-  const wallet = () => createWalletClient({ chain: orbinumTestnet, transport: custom(eth()), account: account! });
+  const wallet = () => createWalletClient({ chain: orbinumTestnet, transport: custom(providerRef.current!), account: account! });
 
-  async function ensureChain() {
+  /** Switches the wallet to Orbinum, adding the network first if the wallet does not know it. */
+  async function ensureChain(p: Eip1193 | null = providerRef.current) {
+    if (!p) throw new Error("Wallet not connected");
     const hex = "0x" + orbinumTestnet.id.toString(16);
     try {
-      await eth().request({ method: "wallet_switchEthereumChain", params: [{ chainId: hex }] });
-    } catch {
-      await eth().request({
+      await p.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hex }] });
+    } catch (e: any) {
+      if (e?.code === 4001) throw e; // the user declined the switch
+      await p.request({
         method: "wallet_addEthereumChain",
         params: [{
           chainId: hex,
@@ -222,21 +233,77 @@ export default function App() {
     }
   }
 
-  async function connect() {
-    if (!eth()) return notify("EVM wallet (MetaMask etc.) not found", true);
+  /** Forgets the connected wallet in this page: listeners, account, balances and open dialogs. */
+  function clearSession() {
+    cleanupRef.current();
+    cleanupRef.current = () => {};
+    providerRef.current = null;
+    setAccount(null);
+    setWalletName("");
+    setWalletIcon(undefined);
+    setOrbBal(0n);
+    setTokBal(0n);
+    setIsBlocked(false);
+    setFaucetNext(0);
+    setFill(null);
+    setReceipt(null);
+  }
+
+  async function connectWith(w: Detected) {
+    setChooser(false);
+    const p = w.provider;
     try {
-      const [a] = await eth().request({ method: "eth_requestAccounts" });
-      await ensureChain();
-      setAccount(a);
+      // Ask the wallet to show its account picker again, so an account approved earlier is not reused silently.
+      // Wallets without this method simply fall through to eth_requestAccounts.
+      try {
+        await p.request({ method: "wallet_requestPermissions", params: [{ eth_accounts: {} }] });
+      } catch (e: any) {
+        if (e?.code === 4001) throw e;
+      }
+      const accounts = (await p.request({ method: "eth_requestAccounts" })) as string[];
+      if (!accounts?.length) throw new Error("The wallet did not share an account");
+      await ensureChain(p);
+      cleanupRef.current(); // detach from a previously connected wallet
+      providerRef.current = p;
+      const onAccounts = (accs: string[]) => {
+        if (!accs?.length) clearSession();
+        else setAccount(accs[0] as Address);
+      };
+      p.on?.("accountsChanged", onAccounts);
+      cleanupRef.current = () => p.removeListener?.("accountsChanged", onAccounts);
+      setWalletName(w.name);
+      setWalletIcon(w.icon);
+      setAccount(accounts[0] as Address);
+      toasts.push({ kind: "success", title: "Wallet connected", detail: `${w.name} · ${short(accounts[0])}` });
     } catch (e: any) {
-      notify(e.shortMessage ?? e.message, true);
+      if (e?.code === 4001) notify("Connection cancelled");
+      else notify(e.shortMessage ?? e.message, true);
     }
+  }
+
+  /** One wallet installed: connect straight away. Several (or none): show the chooser. */
+  function connect() {
+    const list = withLegacy(detected);
+    if (list.length === 1) void connectWith(list[0]);
+    else setChooser(true);
+  }
+
+  async function disconnect() {
+    try {
+      // MetaMask and several others can drop this site's permission, so the next connect asks again.
+      await providerRef.current?.request({ method: "wallet_revokePermissions", params: [{ eth_accounts: {} }] });
+    } catch {
+      /* not every wallet supports revoking */
+    }
+    clearSession();
+    toasts.push({ kind: "info", title: "Wallet disconnected" });
   }
 
   /** Runs a transaction flow, waits for every hash, refreshes, and returns the hashes (or null on failure). */
   async function run(label: string, fn: () => Promise<`0x${string}`[]>): Promise<`0x${string}`[] | null> {
     if (!account) {
-      notify("Connect wallet first", true);
+      notify("Connect a wallet first", true);
+      connect();
       return null;
     }
     setBusy(true);
@@ -393,7 +460,19 @@ export default function App() {
               : `Get ${faucetAmount > 0n ? fmtQuote(faucetAmount, tokenOf(TEST_TOKEN), 0, 0) + " " : ""}${testSymbol}`}
           </button>
         )}
-        <button className="btn solid" onClick={connect} title={account ? `${fmtOrb(orbBal)} ORB${selected ? ` · ${fmtQuote(tokBal, selected, 0, 2)} ${selected.symbol}` : ""}` : undefined}>{account ? short(account) : "Connect wallet"}</button>
+        {account ? (
+          <WalletMenu
+            address={account}
+            walletName={walletName}
+            walletIcon={walletIcon}
+            balances={`${fmtOrb(orbBal)} ORB${selected ? ` · ${fmtQuote(tokBal, selected, 0, 2)} ${selected.symbol}` : ""}`}
+            explorerUrl={`${orbinumTestnet.blockExplorers.default.url}/address/${account}`}
+            onSwitch={() => setChooser(true)}
+            onDisconnect={disconnect}
+          />
+        ) : (
+          <button className="btn solid" onClick={connect}>Connect wallet</button>
+        )}
       </header>
 
       {tab === "market" && (
@@ -479,6 +558,8 @@ export default function App() {
             <p>Token contract: <a href={`${orbinumTestnet.blockExplorers.default.url}/address/${TEST_TOKEN}`} target="_blank" rel="noreferrer"><code>{TEST_TOKEN}</code></a></p>
             <h3>Where do I get testnet ORB?</h3>
             <p>The “Get ORB” button in the header opens the official Orbinum testnet faucet, which gives 5 ORB per 24 hours. ORB is needed for gas and for trading.</p>
+            <h3>Which wallets can I use?</h3>
+            <p>Any browser wallet that supports EIP-1193, including MetaMask, Rabby, Coinbase Wallet, OKX Wallet and Trust Wallet. If several are installed, you pick one when you press “Connect wallet”. On a phone, open this site inside your wallet app's built-in browser. Use the address menu to switch wallet or account, or to disconnect. Connecting never signs or sends anything.</p>
             <h3>Can I fill part of an order?</h3>
             <p>Yes. Enter any amount up to the remaining size.</p>
             <h3>Fees?</h3>
@@ -512,6 +593,7 @@ export default function App() {
 
       {fill && <FillModal order={fill} token={tokenOf(fill.quote)} account={account} busy={busy} takerBps={fees.taker} onClose={() => setFill(null)} onConfirm={confirmFill} />}
       {receipt && <ReceiptModal receipt={receipt} onSign={signReceipt} onClose={() => setReceipt(null)} />}
+      {chooser && <WalletModal wallets={withLegacy(detected)} onPick={connectWith} onClose={() => setChooser(false)} />}
       <ToastStack items={toasts.items} explorerTx={explorerTx} onDismiss={toasts.dismiss} onHover={toasts.setHover} />
     </>
   );
