@@ -11,12 +11,13 @@ import {
   type Address,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { DEPLOYED, erc20Abi, IS_V2, orbinumTestnet, otcAbi, OTC, PRIVATE_FILL_GAS, TEST_TOKEN } from "./chain";
+import { DEPLOYED, ORB_FAUCET_URL, erc20Abi, IS_TESTNET, IS_V2, orbinumTestnet, otcAbi, OTC, PRIVATE_FILL_GAS, TEST_TOKEN } from "./chain";
 import { FEATURES } from "./features";
 import { cost, feeOf, fmtOrb, fmtQuote, pct, short, type Token } from "./format";
 import { Halftone } from "./components/Hero";
 import { MetalLogo } from "./components/MetalLogo";
 import { StablecoinScan } from "./components/StablecoinScan";
+import { ToastStack, useToasts } from "./components/Toasts";
 
 type Order = {
   id: bigint;
@@ -31,7 +32,6 @@ type Order = {
   remainingFee: bigint;
 };
 type Tab = "market" | "mine" | "create" | "onetime" | "faq";
-type Toast = { msg: string; err?: boolean } | null;
 type Receipt = {
   app: string;
   network: string;
@@ -67,7 +67,10 @@ export default function App() {
   const [sel, setSel] = useState<Address | null>(null);
   const [orbBal, setOrbBal] = useState<bigint>(0n);
   const [tokBal, setTokBal] = useState<bigint>(0n);
-  const [toast, setToast] = useState<Toast>(null);
+  const toasts = useToasts();
+  const [faucetNext, setFaucetNext] = useState(0); // unix seconds when the test-token faucet can be used again
+  const [faucetAmount, setFaucetAmount] = useState(0n);
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [busy, setBusy] = useState(false);
   const [fill, setFill] = useState<Order | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
@@ -79,10 +82,30 @@ export default function App() {
   const tokenOf = useCallback((a?: string) => tokens.find((t) => sameAddr(t.address, a)), [tokens]);
   const selected = tokenOf(sel ?? undefined) ?? enabledTokens[0];
 
+  /** A plain message that is not tied to a transaction. */
   const notify = (msg: string, err = false) => {
-    setToast({ msg, err });
-    setTimeout(() => setToast(null), 6000);
+    toasts.push({ kind: err ? "error" : "info", title: msg });
   };
+
+  /**
+   * One wallet transaction with its own notification: waiting for the wallet, submitted (with a link), then
+   * confirmed or failed. Resolves with the hash once the transaction is mined successfully.
+   */
+  async function tx(title: string, send: () => Promise<`0x${string}`>): Promise<`0x${string}`> {
+    const id = toasts.push({ kind: "pending", title, detail: "Confirm in your wallet" });
+    try {
+      const hash = await send();
+      toasts.update(id, { detail: "Submitted, waiting for confirmation", hash });
+      const receipt = await pub.waitForTransactionReceipt({ hash });
+      if (receipt.status === "reverted") throw new Error("Transaction reverted on-chain");
+      toasts.update(id, { kind: "success", detail: "Confirmed", hash });
+      return hash;
+    } catch (e: any) {
+      toasts.update(id, { kind: "error", detail: e.shortMessage ?? e.message });
+      e.reported = true;
+      throw e;
+    }
+  }
 
   const loadOrders = useCallback(async () => {
     if (!DEPLOYED || !IS_V2) return;
@@ -124,6 +147,24 @@ export default function App() {
     if (selected) setTokBal((await pub.readContract({ address: selected.address, abi: erc20Abi, functionName: "balanceOf", args: [account] })) as bigint);
     if (IS_V2) setIsBlocked((await pub.readContract({ address: OTC, abi: otcAbi, functionName: "blocked", args: [account] })) as boolean);
   }, [account, selected]);
+
+  const loadFaucet = useCallback(async () => {
+    if (!IS_TESTNET || !account) return;
+    const [last, cooldown, amount] = await Promise.all([
+      pub.readContract({ address: TEST_TOKEN, abi: erc20Abi, functionName: "lastFaucet", args: [account] }),
+      pub.readContract({ address: TEST_TOKEN, abi: erc20Abi, functionName: "FAUCET_COOLDOWN" }),
+      pub.readContract({ address: TEST_TOKEN, abi: erc20Abi, functionName: "FAUCET_AMOUNT" }),
+    ]);
+    setFaucetNext((last as bigint) === 0n ? 0 : Number(last as bigint) + Number(cooldown as bigint));
+    setFaucetAmount(amount as bigint);
+  }, [account]);
+
+  useEffect(() => { loadFaucet().catch(() => {}); }, [loadFaucet]);
+  useEffect(() => {
+    if (faucetNext <= now) return;
+    const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [faucetNext, now]);
 
   useEffect(() => {
     loadTokens().catch(() => {});
@@ -174,13 +215,12 @@ export default function App() {
     try {
       await ensureChain();
       const hashes = await fn();
-      for (const hash of hashes) await pub.waitForTransactionReceipt({ hash });
-      notify(`${label} ✓`);
       await loadOrders();
       await loadBalances();
+      await loadFaucet();
       return hashes;
     } catch (e: any) {
-      notify(e.shortMessage ?? e.message, true);
+      if (!e.reported) notify(`${label}: ${e.shortMessage ?? e.message}`, true);
       return null;
     } finally {
       setBusy(false);
@@ -191,19 +231,17 @@ export default function App() {
   async function approveIfNeeded(token: Address, amount: bigint) {
     const allowance = (await pub.readContract({ address: token, abi: erc20Abi, functionName: "allowance", args: [account!, OTC] })) as bigint;
     if (allowance >= amount) return;
-    if (allowance > 0n) {
-      const reset = await wallet().writeContract({ address: token, abi: erc20Abi, functionName: "approve", args: [OTC, 0n] });
-      await pub.waitForTransactionReceipt({ hash: reset });
-    }
-    const h = await wallet().writeContract({ address: token, abi: erc20Abi, functionName: "approve", args: [OTC, amount] });
-    await pub.waitForTransactionReceipt({ hash: h });
+    const sym = tokenOf(token)?.symbol ?? "token";
+    if (allowance > 0n) await tx(`Reset ${sym} allowance`, () => wallet().writeContract({ address: token, abi: erc20Abi, functionName: "approve", args: [OTC, 0n] }));
+    await tx(`Approve ${sym}`, () => wallet().writeContract({ address: token, abi: erc20Abi, functionName: "approve", args: [OTC, amount] }));
   }
 
+  const testSymbol = tokenOf(TEST_TOKEN)?.symbol ?? "tUSD";
   const faucet = () =>
-    run("Test tokens received", async () => [await wallet().writeContract({ address: TEST_TOKEN, abi: erc20Abi, functionName: "faucet" })]);
+    run("Test token faucet", async () => [await tx(`Get ${testSymbol} from faucet`, () => wallet().writeContract({ address: TEST_TOKEN, abi: erc20Abi, functionName: "faucet" }))]);
 
   const cancel = (o: Order) =>
-    run("Order cancelled", async () => [await wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "cancelOrder", args: [o.id] })]);
+    run("Cancel order", async () => [await tx(`Cancel order #${o.id}`, () => wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "cancelOrder", args: [o.id] }))]);
 
   async function confirmFill(o: Order, orbAmount: bigint, privacyAddress?: string) {
     setFill(null);
@@ -220,16 +258,18 @@ export default function App() {
       }
       const quoteAmount = cost(orbAmount, o.price);
       const takerFee = feeOf(quoteAmount, fees.taker);
-      const hashes = await run("Filled — ORB sent to your private note", async () => {
+      const hashes = await run("Private fill", async () => {
         await approveIfNeeded(o.quote, quoteAmount + takerFee);
         return [
-          await wallet().writeContract({
-            address: OTC,
-            abi: otcAbi,
-            functionName: "fillSellOrderPrivate",
-            args: [o.id, orbAmount, note.commitment as `0x${string}`, note.memo as `0x${string}`],
-            gas: PRIVATE_FILL_GAS,
-          }),
+          await tx(`Buy ORB privately (order #${o.id})`, () =>
+            wallet().writeContract({
+              address: OTC,
+              abi: otcAbi,
+              functionName: "fillSellOrderPrivate",
+              args: [o.id, orbAmount, note.commitment as `0x${string}`, note.memo as `0x${string}`],
+              gas: PRIVATE_FILL_GAS,
+            }),
+          ),
         ];
       });
       if (hashes) {
@@ -254,23 +294,23 @@ export default function App() {
       }
       return;
     }
-    await run("Order filled", async () => {
+    await run("Fill order", async () => {
       if (o.isSell) {
         const q = cost(orbAmount, o.price);
         await approveIfNeeded(o.quote, q + feeOf(q, fees.taker));
-        return [await wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "fillSellOrder", args: [o.id, orbAmount] })];
+        return [await tx(`Buy ORB (order #${o.id})`, () => wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "fillSellOrder", args: [o.id, orbAmount] }))];
       }
-      return [await wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "fillBuyOrder", args: [o.id], value: orbAmount })];
+      return [await tx(`Sell ORB (order #${o.id})`, () => wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "fillBuyOrder", args: [o.id], value: orbAmount }))];
     });
   }
 
   const create = (token: Token, isSell: boolean, price: bigint, orb: bigint) =>
-    run("Order created", async () => {
+    run("Place order", async () => {
       if (isSell)
-        return [await wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "createSellOrder", args: [token.address, price], value: orb })];
+        return [await tx("Place sell order", () => wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "createSellOrder", args: [token.address, price], value: orb }))];
       const q = cost(orb, price);
       await approveIfNeeded(token.address, q + feeOf(q, fees.maker));
-      return [await wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "createBuyOrder", args: [token.address, price, orb] })];
+      return [await tx("Place buy order", () => wallet().writeContract({ address: OTC, abi: otcAbi, functionName: "createBuyOrder", args: [token.address, price, orb] }))];
     });
 
   async function signReceipt() {
@@ -311,11 +351,15 @@ export default function App() {
             {selected && <span>{fmtQuote(tokBal, selected, 0, 2)} {selected.symbol}</span>}
           </div>
         )}
-        {account && selected && sameAddr(selected.address, TEST_TOKEN) && (
-          <button className="btn ghost small" disabled={busy || !DEPLOYED} onClick={faucet}>Get {selected.symbol}</button>
+        {IS_TESTNET && <a className="btn ghost small" href={ORB_FAUCET_URL} target="_blank" rel="noreferrer" title="Opens the Orbinum testnet ORB faucet">Get ORB</a>}
+        {IS_TESTNET && account && (
+          <button className="btn ghost small" disabled={busy || !DEPLOYED || faucetNext > now} onClick={faucet} title="Free test token, testnet only. One claim per hour.">
+            {faucetNext > now
+              ? `Get ${testSymbol} · ${Math.floor((faucetNext - now) / 60)}:${String((faucetNext - now) % 60).padStart(2, "0")}`
+              : `Get ${faucetAmount > 0n ? fmtQuote(faucetAmount, tokenOf(TEST_TOKEN), 0, 0) + " " : ""}${testSymbol}`}
+          </button>
         )}
-        {account && <a className="btn ghost small" href="https://faucet.orbinum.network/" target="_blank" rel="noreferrer">Get ORB</a>}
-        <button className="btn solid" onClick={connect}>{account ? short(account) : "Connect wallet"}</button>
+        <button className="btn solid" onClick={connect} title={account ? `${fmtOrb(orbBal)} ORB${selected ? ` · ${fmtQuote(tokBal, selected, 0, 2)} ${selected.symbol}` : ""}` : undefined}>{account ? short(account) : "Connect wallet"}</button>
       </header>
 
       {tab === "market" && (
@@ -395,7 +439,12 @@ export default function App() {
             <h3>What is this?</h3>
             <p>A peer-to-peer OTC order book for ORB on the Orbinum testnet. Makers lock funds in an escrow contract; takers fill orders in one transaction. No custody by us, no backend.</p>
             <h3>Which tokens can I trade against ORB?</h3>
-            <p>Orders are priced in a whitelisted stablecoin. On testnet that is a worthless test token, {selected?.symbol ?? "tUSD"}, with a public faucet. Mainnet will use USDT and USDC only.</p>
+            <p>Orders are priced in a whitelisted stablecoin. On testnet that is the test token {testSymbol}. Mainnet will use USDT and USDC only.</p>
+            <h3>What is {testSymbol}?</h3>
+            <p>{testSymbol} is a <b>test token that exists only on the Orbinum testnet</b>. It has no value, it is not USDT or USDC, and it will not exist on mainnet. Anyone can claim {faucetAmount > 0n ? fmtQuote(faucetAmount, tokenOf(TEST_TOKEN), 0, 0) : "a fixed amount of"} {testSymbol} once per hour with the “Get {testSymbol}” button in the header after connecting a wallet.</p>
+            <p>Token contract: <a href={`${orbinumTestnet.blockExplorers.default.url}/address/${TEST_TOKEN}`} target="_blank" rel="noreferrer"><code>{TEST_TOKEN}</code></a></p>
+            <h3>Where do I get testnet ORB?</h3>
+            <p>The “Get ORB” button in the header opens the official Orbinum testnet faucet, which gives 5 ORB per 24 hours. ORB is needed for gas and for trading.</p>
             <h3>Can I fill part of an order?</h3>
             <p>Yes. Enter any amount up to the remaining size.</p>
             <h3>Fees?</h3>
@@ -408,7 +457,9 @@ export default function App() {
             <p>After a private receive you can download a receipt with a disclosure key and sign it with the trading address. Share it only with whoever you need to show it to. A disclosure key proves a note's value and asset and cannot be used to spend it.</p>
             <h3>Operator controls</h3>
             <p>The operator can pause new trading and block specific addresses from creating or filling orders. Cancelling your own order always works, and the operator can never move or hold your funds.</p>
-            <p>Contract: <a href={`${orbinumTestnet.blockExplorers.default.url}/address/${OTC}`} target="_blank" rel="noreferrer">{short(OTC)}</a></p>
+            <h3>Contracts (Orbinum testnet, chain 2700)</h3>
+            <p>OTC escrow: <a href={`${orbinumTestnet.blockExplorers.default.url}/address/${OTC}`} target="_blank" rel="noreferrer"><code>{OTC}</code></a></p>
+            <p>{testSymbol} test token: <a href={`${orbinumTestnet.blockExplorers.default.url}/address/${TEST_TOKEN}`} target="_blank" rel="noreferrer"><code>{TEST_TOKEN}</code></a></p>
           </div>
         )}
       </main>
@@ -427,7 +478,7 @@ export default function App() {
 
       {fill && <FillModal order={fill} token={tokenOf(fill.quote)} account={account} busy={busy} takerBps={fees.taker} onClose={() => setFill(null)} onConfirm={confirmFill} />}
       {receipt && <ReceiptModal receipt={receipt} onSign={signReceipt} onClose={() => setReceipt(null)} />}
-      {toast && <div className={"toast" + (toast.err ? " err" : "")} role="status">{toast.msg}</div>}
+      <ToastStack items={toasts.items} explorerTx={explorerTx} onDismiss={toasts.dismiss} onHover={toasts.setHover} />
     </>
   );
 }

@@ -29,15 +29,15 @@ code { font: 12.5px/1.45 var(--mono); word-break: break-all; color: var(--strong
 .banner.alert { color: var(--sell); background: #100606; }
 
 /* ---------- header ---------- */
-.top { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 22px; padding: 14px 24px; background: rgba(0, 0, 0, 0.82); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.top { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 14px; padding: 14px 24px; background: rgba(0, 0, 0, 0.82); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .brand { display: inline-flex; align-items: center; gap: 9px; color: var(--strong); text-decoration: none; font-weight: 600; letter-spacing: 0.02em; font-size: 17px; }
 .brand span { color: var(--muted); font-weight: 500; }
 .glyph { width: 22px; height: 22px; color: var(--strong); transition: transform 0.6s cubic-bezier(0.2, 0.7, 0.2, 1); }
 .brand:hover .glyph { transform: rotate(60deg); }
 .top nav { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
 .top nav::-webkit-scrollbar { display: none; }
-.top nav button { background: none; border: 0; color: var(--muted); padding: 8px 12px; font: 500 12px/1 var(--font); letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; white-space: nowrap; position: relative; transition: color 0.2s; }
-.top nav button::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: 2px; height: 1px; background: var(--strong); transform: scaleX(0); transform-origin: left; transition: transform 0.25s ease; }
+.top nav button { background: none; border: 0; color: var(--muted); padding: 8px 10px; font: 500 12px/1 var(--font); letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; white-space: nowrap; position: relative; transition: color 0.2s; }
+.top nav button::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: 2px; height: 1px; background: var(--strong); transform: scaleX(0); transform-origin: left; transition: transform 0.25s ease; }
 .top nav button:hover { color: var(--strong); }
 .top nav button.on { color: var(--strong); }
 .top nav button.on::after, .top nav button:hover::after { transform: scaleX(1); }
@@ -78,8 +78,8 @@ code { font: 12.5px/1.45 var(--mono); word-break: break-all; color: var(--strong
 .hex-core { fill: var(--strong) !important; animation: pulse 3.2s ease-in-out infinite; }
 
 /* ---------- metallic Orbinum mark ---------- */
-.metal { position: absolute; right: max(16px, calc((100vw - 1200px) / 2)); top: 50%; width: min(400px, 38vw); aspect-ratio: 500 / 577; transform: translateY(-50%); pointer-events: none; }
-.metal-fallback { background: linear-gradient(115deg, #6f757c 0%, #f4f6f9 28%, #858b92 48%, #ffffff 68%, #6a7077 100%); background-size: 240% 100%; animation: sheen 7s ease-in-out infinite alternate; -webkit-mask: var(--mark) center / contain no-repeat; mask: var(--mark) center / contain no-repeat; }
+.metal { position: absolute; right: max(8px, calc((100vw - 1200px) / 2 - 20px)); top: 50%; width: min(440px, 42vw); aspect-ratio: 1; transform: translateY(-50%); pointer-events: none; }
+.metal-fallback { aspect-ratio: 500 / 577; background: linear-gradient(115deg, #6f757c 0%, #f4f6f9 28%, #858b92 48%, #ffffff 68%, #6a7077 100%); background-size: 240% 100%; animation: sheen 7s ease-in-out infinite alternate; -webkit-mask: var(--mark) center / contain no-repeat; mask: var(--mark) center / contain no-repeat; }
 @keyframes sheen { to { background-position: 100% 0; } }
 
 /* ---------- layout ---------- */
@@ -140,6 +140,24 @@ label.check input { width: 16px; height: 16px; accent-color: #fff; }
 .toast { position: fixed; z-index: 50; bottom: 24px; left: 50%; transform: translateX(-50%); background: #0d0d0d; border: 1px solid var(--line2); padding: 12px 18px; max-width: 90vw; font-size: 14px; color: var(--strong); animation: rise 0.3s ease both; }
 .toast.err { border-color: var(--sell); }
 
+/* ---------- transaction notifications (bottom right) ---------- */
+.toasts { position: fixed; z-index: 60; right: 20px; bottom: 20px; width: min(380px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 10px; }
+.toast-item { display: flex; align-items: flex-start; gap: 12px; padding: 14px 14px 14px 16px; background: #0b0b0b; border: 1px solid var(--line2); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6); animation: slidein 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.toast-item .tdot { flex: none; width: 10px; height: 10px; margin-top: 6px; border-radius: 50%; background: var(--muted); }
+.toast-item.pending .tdot { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+.toast-item.success { border-color: rgba(127, 224, 181, 0.45); }
+.toast-item.success .tdot { background: var(--buy); }
+.toast-item.error { border-color: rgba(255, 143, 143, 0.55); }
+.toast-item.error .tdot { background: var(--sell); }
+.tbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.tbody b { color: var(--strong); font-weight: 500; font-size: 14px; }
+.tbody span { color: var(--fg); overflow-wrap: anywhere; }
+.tbody a { color: var(--muted); font-size: 12px; }
+.tclose { flex: none; background: none; border: 0; color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.tclose:hover { color: var(--strong); }
+@keyframes slidein { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+@media (max-width: 640px) { .toasts { right: 16px; bottom: 16px; } }
+
 /* ---------- multichain scan ---------- */
 .scan { margin: 16px 0 4px; border: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 8px; }
 .scan-head { display: flex; justify-content: space-between; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
@@ -171,6 +189,8 @@ label.check input { width: 16px; height: 16px; accent-color: #fff; }
 }
 
 /* ---------- responsive ---------- */
+@media (max-width: 1420px) { .bal { display: none; } }
+@media (max-width: 1040px) { .top nav { order: 3; width: 100%; } }
 @media (max-width: 900px) {
   .grid { grid-template-columns: minmax(0, 1fr); }
   .stats { grid-template-columns: repeat(2, 1fr); }

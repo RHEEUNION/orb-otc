@@ -25,6 +25,9 @@ export const IS_V2 = !!d.otcV2;
 /** The testnet test token. It has a public faucet; on mainnet this is replaced by whitelisted USDT and USDC. */
 export const TEST_TOKEN = d.quote as `0x${string}`;
 export const DEPLOYED = OTC !== ZERO;
+/** Testnet-only helpers (test-token faucet, ORB faucet link) are shown only while this is true. */
+export const IS_TESTNET = orbinumTestnet.testnet === true;
+export const ORB_FAUCET_URL = "https://faucet.orbinum.network/";
 export const PRIVATE_FILL_GAS = 1_500_000n; // the precompile call is not reliably gas-estimated
 
 export const otcAbi = parseAbi([
@@ -51,4 +54,7 @@ export const erc20Abi = parseAbi([
   "function symbol() view returns (string)",
   "function decimals() view returns (uint8)",
   "function faucet()",
+  "function lastFaucet(address) view returns (uint256)",
+  "function FAUCET_COOLDOWN() view returns (uint256)",
+  "function FAUCET_AMOUNT() view returns (uint256)",
 ]);
