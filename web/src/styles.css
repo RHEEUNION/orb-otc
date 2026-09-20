@@ -27,6 +27,8 @@ code { font: 12.5px/1.45 var(--mono); word-break: break-all; color: var(--strong
 /* ---------- banners ---------- */
 .banner { padding: 8px 24px; text-align: center; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--warn); border-bottom: 1px solid var(--line); background: #0b0a05; }
 .banner.alert { color: var(--sell); background: #100606; }
+.banner.update { color: var(--strong); background: #0d0d10; }
+.banner.update button { margin-left: 8px; background: var(--strong); color: #000; border: 0; padding: 5px 12px; font: 500 11px/1 var(--font); letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; }
 
 /* ---------- header ---------- */
 .top { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 14px; padding: 14px 24px; background: rgba(0, 0, 0, 0.82); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); flex-wrap: wrap; }

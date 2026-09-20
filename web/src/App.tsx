@@ -77,6 +77,7 @@ export default function App() {
   const [paused, setPaused] = useState(false);
   const [isBlocked, setIsBlocked] = useState(false);
   const [fees, setFees] = useState({ maker: 0, taker: 0 });
+  const [stale, setStale] = useState(false); // a newer build of the site has been published
 
   const enabledTokens = useMemo(() => tokens.filter((t) => t.enabled), [tokens]);
   const tokenOf = useCallback((a?: string) => tokens.find((t) => sameAddr(t.address, a)), [tokens]);
@@ -147,6 +148,33 @@ export default function App() {
     if (selected) setTokBal((await pub.readContract({ address: selected.address, abi: erc20Abi, functionName: "balanceOf", args: [account] })) as bigint);
     if (IS_V2) setIsBlocked((await pub.readContract({ address: OTC, abi: otcAbi, functionName: "blocked", args: [account] })) as boolean);
   }, [account, selected]);
+
+  // GitHub Pages lets browsers cache the page for 10 minutes, so an open tab can keep running an old build.
+  // Compare the running bundle with the published one and offer a reload when they differ.
+  useEffect(() => {
+    const bundle = (s: string) => s.match(/assets\/(index-[\w-]+\.js)/)?.[1];
+    const running = bundle([...document.scripts].map((s) => s.src).find((s) => /assets\/index-/.test(s)) ?? "");
+    if (!running) return; // dev server
+    const check = async () => {
+      try {
+        const html = await (await fetch(`${import.meta.env.BASE_URL}?v=${Date.now()}`, { cache: "no-store" })).text();
+        const published = bundle(html);
+        if (published && published !== running) setStale(true);
+      } catch {
+        /* offline: try again later */
+      }
+    };
+    const timer = setInterval(check, 60_000);
+    const onVisible = () => { if (!document.hidden) check(); };
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", onVisible);
+    check();
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
 
   const loadFaucet = useCallback(async () => {
     if (!IS_TESTNET || !account) return;
@@ -334,6 +362,12 @@ export default function App() {
   return (
     <>
       <div className="banner">Testnet only — Orbinum Testnet (chain 2700). Tokens have no real value.</div>
+      {stale && (
+        <div className="banner update">
+          A new version of this site is available.{" "}
+          <button onClick={() => window.location.reload()}>Reload</button>
+        </div>
+      )}
       {paused && <div className="banner alert">Trading is paused by the operator. You can still cancel your own orders and get your funds back.</div>}
       {!paused && isBlocked && <div className="banner alert">This address is blocked from new trades. You can still cancel your own orders and get your funds back.</div>}
 
