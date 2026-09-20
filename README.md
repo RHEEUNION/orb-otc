@@ -16,6 +16,8 @@ Connect MetaMask · post or take an order · settle on-chain in one transaction.
 
 ---
 
+**Live demo:** https://rheeunion.github.io/orb-otc-demo/
+
 ## Trade in four steps
 
 1. **Connect Wallet.** Click the button and approve MetaMask (or any EVM wallet). The site adds **Orbinum Testnet** to your wallet and switches to it automatically. There is nothing to configure.
