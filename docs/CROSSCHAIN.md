@@ -2,7 +2,7 @@
 
 Goal: on mainnet, ORB trades only against USDT and USDC. A buyer should be able to pay with stablecoins they hold on any network, and a seller should be able to receive USDT/USDC on the network they prefer (Ethereum, BNB Chain, Tron, ...).
 
-Nothing here is implemented. Testnet uses one test token (tUSD) on Orbinum itself.
+Status: the contract already supports several whitelisted quote tokens and the multichain balance scanner is built and verified, both switched off until mainnet. Bridging into Orbinum and payouts to other networks are not built. Testnet uses one test token (tUSD) on Orbinum itself.
 
 ## What is verified today
 
@@ -21,6 +21,14 @@ Nothing here is implemented. Testnet uses one test token (tUSD) on Orbinum itsel
 3. Whether Tron will be supported by any route.
 
 Until these are answered, the settlement asset on Orbinum cannot be chosen.
+
+## What is already built (ready for mainnet)
+
+- **Multi quote token contract.** The owner whitelists tokens (`setQuoteToken`); each order is priced and settled in one of them; fees accrue per token. Disabling a token only stops new orders. Tokens with no return value (USDT style) work, fee-on-transfer tokens are rejected, and decimals differ freely (6 or 18) because price is quote base units per 1 ORB.
+- **Balance scanner** (`web/src/scanner.ts`). Reads USDT and USDC on Ethereum, BNB Chain, Arbitrum, Base and Polygon with one multicall per network and RPC fallback. Every configured token address was checked on-chain for symbol and decimals, and a real scan of a funded wallet returned in under a second with no failed network. Tron is out of scope.
+- **Feature flag.** Off by default. See `docs/OPERATIONS.md`.
+
+Note for the token list: Tether has moved USDT on some networks to USDT0, so the on-chain symbol on Arbitrum reads `USD₮0` and on Polygon `USDT0`. The configured addresses are the official ones.
 
 ## Where the difficulty is
 

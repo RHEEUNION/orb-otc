@@ -1,26 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-interface IERC20 {
-    function transfer(address to, uint256 v) external returns (bool);
-    function transferFrom(address from, address to, uint256 v) external returns (bool);
-}
-
 /// @title OrbOTCV2
-/// @notice Escrow order book: native ORB <-> one ERC-20 quote token, with three additions over v1:
-///         1. Private receive: a taker filling a sell order can have the ORB paid into a shielded note
+/// @notice Escrow order book: native ORB <-> a whitelisted ERC-20 quote token (tUSD on testnet, USDT and USDC on
+///         mainnet), with these features:
+///         1. Several quote tokens: the owner whitelists tokens. Each order is priced and settled in one of them.
+///         2. Private receive: a taker filling a sell order can have the ORB paid into a shielded note
 ///            (Orbinum ShieldedPool precompile) instead of a public transfer.
-///         2. Operator controls: pause and blocklist for new trading. Cancelling an order is ALWAYS possible,
+///         3. Operator controls: pause and blocklist for new trading. Cancelling an order is ALWAYS possible,
 ///            and no admin function can move or hold user funds.
-///         3. Fees on the quote (stablecoin) leg: a maker fee locked into the order when it is placed, and a taker
-///            fee at the rate in force when the order is filled. Both are capped at MAX_FEE_BPS.
-/// @dev Testnet build, unaudited. Price = quote base units per 1 ORB (1e18 wei). Partial fills allowed.
+///         4. Fees on the quote leg: a maker fee locked into the order when it is placed, and a taker fee at the
+///            rate in force when the order is filled. Both are capped at MAX_FEE_BPS. Fees accrue per token.
+/// @dev Testnet build, unaudited. Price = quote base units per 1 ORB (1e18 wei), so it is decimal-agnostic.
+///      Only whitelist standard tokens: fee-on-transfer and rebasing tokens are rejected at transfer time.
 contract OrbOTCV2 {
     struct Order {
         address maker;
         bool isSell; // true: maker sells ORB for quote; false: maker buys ORB with quote
         bool open;
         uint16 makerFeeBps; // maker fee rate locked when the order was placed
+        address quote; // token this order is priced and settled in
         uint256 price; // quote base units per 1e18 wei ORB
         uint256 remainingOrb; // wei of ORB still to trade
         uint256 remainingQuote; // buy orders only: quote still escrowed
@@ -34,15 +33,17 @@ contract OrbOTCV2 {
     uint16 public constant MAX_FEE_BPS = 100; // 1.00% per side, hard cap
     uint256 private constant BPS = 10_000;
 
-    IERC20 public immutable quote;
     address public owner;
     bool public paused;
     mapping(address => bool) public blocked;
 
+    mapping(address => bool) public quoteAllowed;
+    address[] private _quoteList; // every token that was ever whitelisted, for the UI to enumerate
+
     uint16 public makerFeeBps;
     uint16 public takerFeeBps;
     address public feeRecipient; // address(0) disables fees
-    uint256 public accruedFees; // quote token owed to feeRecipient, claimed with claimFees()
+    mapping(address => uint256) public accruedFees; // per quote token, claimed with claimFees(token)
 
     uint256 public nextOrderId;
     mapping(uint256 => Order) public orders;
@@ -68,21 +69,22 @@ contract OrbOTCV2 {
         _;
     }
 
-    event OrderCreated(uint256 indexed id, address indexed maker, bool isSell, uint256 price, uint256 orbAmount);
+    event OrderCreated(uint256 indexed id, address indexed maker, bool isSell, address quote, uint256 price, uint256 orbAmount);
     event OrderFilled(uint256 indexed id, address indexed taker, uint256 orbAmount, uint256 quoteAmount, bool privateReceive);
     event OrderCancelled(uint256 indexed id);
-    event FeeCharged(uint256 indexed id, uint256 makerFee, uint256 takerFee);
+    event FeeCharged(uint256 indexed id, address indexed quote, uint256 makerFee, uint256 takerFee);
     event FeesUpdated(uint16 makerFeeBps, uint16 takerFeeBps);
     event FeeRecipientUpdated(address indexed recipient);
-    event FeesClaimed(address indexed recipient, uint256 amount);
+    event FeesClaimed(address indexed token, address indexed recipient, uint256 amount);
+    event QuoteTokenSet(address indexed token, bool allowed);
     event Paused(address indexed by);
     event Unpaused(address indexed by);
     event BlockedSet(address indexed account, bool isBlocked, address indexed by);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
-    constructor(address quoteToken, address feeRecipient_, uint16 makerFeeBps_, uint16 takerFeeBps_) {
+    constructor(address[] memory quoteTokens, address feeRecipient_, uint16 makerFeeBps_, uint16 takerFeeBps_) {
+        require(quoteTokens.length > 0, "no quote token");
         require(makerFeeBps_ <= MAX_FEE_BPS && takerFeeBps_ <= MAX_FEE_BPS, "fee too high");
-        quote = IERC20(quoteToken);
         owner = msg.sender;
         feeRecipient = feeRecipient_;
         makerFeeBps = makerFeeBps_;
@@ -90,6 +92,7 @@ contract OrbOTCV2 {
         emit OwnershipTransferred(address(0), msg.sender);
         emit FeeRecipientUpdated(feeRecipient_);
         emit FeesUpdated(makerFeeBps_, takerFeeBps_);
+        for (uint256 i = 0; i < quoteTokens.length; i++) _setQuote(quoteTokens[i], true);
     }
 
     // ---------------------------------------------------------------- admin (cannot touch user funds)
@@ -119,6 +122,24 @@ contract OrbOTCV2 {
         owner = newOwner;
     }
 
+    /// Whitelist (or disable) a quote token. Disabling only stops NEW orders in that token: existing orders can still
+    /// be filled or cancelled, so nobody's escrow is ever stranded.
+    function setQuoteToken(address token, bool allowed) external onlyOwner {
+        _setQuote(token, allowed);
+    }
+
+    function _setQuote(address token, bool allowed) internal {
+        require(token.code.length > 0, "not a contract");
+        if (allowed && !_isListed(token)) _quoteList.push(token);
+        quoteAllowed[token] = allowed;
+        emit QuoteTokenSet(token, allowed);
+    }
+
+    function _isListed(address token) internal view returns (bool) {
+        for (uint256 i = 0; i < _quoteList.length; i++) if (_quoteList[i] == token) return true;
+        return false;
+    }
+
     /// Change fee rates. The maker rate only affects orders placed afterwards; the taker rate applies to later fills.
     function setFees(uint16 makerBps, uint16 takerBps) external onlyOwner {
         require(makerBps <= MAX_FEE_BPS && takerBps <= MAX_FEE_BPS, "fee too high");
@@ -133,14 +154,14 @@ contract OrbOTCV2 {
         emit FeeRecipientUpdated(recipient);
     }
 
-    /// Send all accrued fees to the fee recipient. Anyone may call it; funds only ever go to the recipient.
-    function claimFees() external nonReentrant {
+    /// Send all accrued fees in `token` to the fee recipient. Anyone may call it; funds only ever go to the recipient.
+    function claimFees(address token) external nonReentrant {
         address to = feeRecipient;
-        uint256 amt = accruedFees;
+        uint256 amt = accruedFees[token];
         require(to != address(0) && amt > 0, "nothing to claim");
-        accruedFees = 0;
-        _push(to, amt);
-        emit FeesClaimed(to, amt);
+        accruedFees[token] = 0;
+        _push(token, to, amt);
+        emit FeesClaimed(token, to, amt);
     }
 
     // ---------------------------------------------------------------- helpers
@@ -182,35 +203,57 @@ contract OrbOTCV2 {
         }
     }
 
-    function _pull(address from, uint256 amt) internal {
-        require(quote.transferFrom(from, address(this), amt), "quote pull failed");
+    // --- token transfers that tolerate tokens with no return value (USDT style) and reject fee-on-transfer tokens
+
+    function _balance(address token) private view returns (uint256) {
+        (bool ok, bytes memory data) = token.staticcall(abi.encodeWithSignature("balanceOf(address)", address(this)));
+        require(ok && data.length >= 32, "balance read failed");
+        return abi.decode(data, (uint256));
     }
 
-    function _push(address to, uint256 amt) internal {
-        require(quote.transfer(to, amt), "quote push failed");
+    function _call(address token, bytes memory data) private {
+        (bool ok, bytes memory ret) = token.call(data);
+        require(ok && (ret.length == 0 || abi.decode(ret, (bool))), "token transfer failed");
+    }
+
+    function _pull(address token, address from, uint256 amt) internal {
+        uint256 before = _balance(token);
+        _call(token, abi.encodeWithSignature("transferFrom(address,address,uint256)", from, address(this), amt));
+        require(_balance(token) - before == amt, "unsupported token");
+    }
+
+    function _push(address token, address to, uint256 amt) internal {
+        _call(token, abi.encodeWithSignature("transfer(address,uint256)", to, amt));
     }
 
     // ---------------------------------------------------------------- create
 
-    /// @notice Sell ORB: send ORB as msg.value, ask `price` quote units per ORB.
-    function createSellOrder(uint256 price) external payable nonReentrant tradingAllowed returns (uint256 id) {
+    /// @notice Sell ORB: send ORB as msg.value, ask `price` units of `quote` per ORB.
+    function createSellOrder(address quote, uint256 price) external payable nonReentrant tradingAllowed returns (uint256 id) {
+        require(quoteAllowed[quote], "quote not allowed");
         require(msg.value > 0 && price > 0, "bad params");
         id = nextOrderId++;
-        orders[id] = Order(msg.sender, true, true, _effMakerBps(), price, msg.value, 0, 0);
-        emit OrderCreated(id, msg.sender, true, price, msg.value);
+        orders[id] = Order(msg.sender, true, true, _effMakerBps(), quote, price, msg.value, 0, 0);
+        emit OrderCreated(id, msg.sender, true, quote, price, msg.value);
     }
 
-    /// @notice Buy ORB: escrow quote (plus the maker fee) for `orbAmount` at `price` (requires prior approve).
-    function createBuyOrder(uint256 price, uint256 orbAmount) external nonReentrant tradingAllowed returns (uint256 id) {
+    /// @notice Buy ORB: escrow `quote` (plus the maker fee) for `orbAmount` at `price` (requires prior approve).
+    function createBuyOrder(address quote, uint256 price, uint256 orbAmount)
+        external
+        nonReentrant
+        tradingAllowed
+        returns (uint256 id)
+    {
+        require(quoteAllowed[quote], "quote not allowed");
         require(orbAmount > 0 && price > 0, "bad params");
         uint256 q = _cost(orbAmount, price, true);
         require(q > 0, "too small");
         uint16 mBps = _effMakerBps();
         uint256 mFee = _fee(q, mBps);
-        _pull(msg.sender, q + mFee);
+        _pull(quote, msg.sender, q + mFee);
         id = nextOrderId++;
-        orders[id] = Order(msg.sender, false, true, mBps, price, orbAmount, q, mFee);
-        emit OrderCreated(id, msg.sender, false, price, orbAmount);
+        orders[id] = Order(msg.sender, false, true, mBps, quote, price, orbAmount, q, mFee);
+        emit OrderCreated(id, msg.sender, false, quote, price, orbAmount);
     }
 
     // ---------------------------------------------------------------- fill
@@ -226,11 +269,11 @@ contract OrbOTCV2 {
         if (o.remainingOrb == 0) o.open = false;
         uint256 mFee = _fee(q, o.makerFeeBps);
         uint256 tFee = _fee(q, _effTakerBps());
-        _pull(msg.sender, q + tFee); // taker pays the price plus the taker fee
-        _push(o.maker, q - mFee); // maker receives the price minus the maker fee
+        _pull(o.quote, msg.sender, q + tFee); // taker pays the price plus the taker fee
+        _push(o.quote, o.maker, q - mFee); // maker receives the price minus the maker fee
         if (mFee + tFee > 0) {
-            accruedFees += mFee + tFee;
-            emit FeeCharged(id, mFee, tFee);
+            accruedFees[o.quote] += mFee + tFee;
+            emit FeeCharged(id, o.quote, mFee, tFee);
         }
     }
 
@@ -273,17 +316,18 @@ contract OrbOTCV2 {
         o.remainingFee -= mFee;
         if (o.remainingOrb == 0) o.open = false;
         _sendOrb(o.maker, orbAmount);
-        _push(msg.sender, q - tFee); // taker receives the price minus the taker fee
+        _push(o.quote, msg.sender, q - tFee); // taker receives the price minus the taker fee
         if (mFee + tFee > 0) {
-            accruedFees += mFee + tFee;
-            emit FeeCharged(id, mFee, tFee);
+            accruedFees[o.quote] += mFee + tFee;
+            emit FeeCharged(id, o.quote, mFee, tFee);
         }
         emit OrderFilled(id, msg.sender, orbAmount, q, false);
     }
 
     // ---------------------------------------------------------------- cancel (never restricted)
 
-    /// @notice Cancel your own order and get the escrow (and unused maker fee) back. Works while paused or blocked.
+    /// @notice Cancel your own order and get the escrow (and unused maker fee) back. Works while paused or blocked,
+    ///         and even if the quote token has since been disabled.
     function cancelOrder(uint256 id) external nonReentrant {
         Order storage o = orders[id];
         require(o.open && o.maker == msg.sender, "not cancellable");
@@ -294,11 +338,18 @@ contract OrbOTCV2 {
         o.remainingQuote = 0;
         o.remainingFee = 0;
         if (o.isSell) _sendOrb(msg.sender, orb);
-        else _push(msg.sender, q);
+        else _push(o.quote, msg.sender, q);
         emit OrderCancelled(id);
     }
 
     // ---------------------------------------------------------------- views
+
+    /// @notice Every token ever whitelisted and whether it is currently allowed, for the UI.
+    function getQuoteTokens() external view returns (address[] memory tokens, bool[] memory enabled) {
+        tokens = _quoteList;
+        enabled = new bool[](tokens.length);
+        for (uint256 i = 0; i < tokens.length; i++) enabled[i] = quoteAllowed[tokens[i]];
+    }
 
     /// @notice Paged read of all orders (open or not) for the UI.
     function getOrders(uint256 from, uint256 limit) external view returns (uint256[] memory ids, Order[] memory list) {

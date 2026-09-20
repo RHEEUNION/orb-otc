@@ -29,6 +29,7 @@ Because price, size, the tUSD leg and the trading address stay public, trades re
 | `transferOwnership(addr)` | Moves admin rights (use a multisig on mainnet) | |
 | `cancelOrder(id)` | Always works, even when paused or blocked | Users can always recover escrow |
 | `setFees`, `setFeeRecipient`, `claimFees` | Platform fees, see below | Capped at 1.00% per side by the contract |
+| `setQuoteToken(token, allowed)` | Whitelists which stablecoins can be used. Only USDT and USDC on mainnet | Disabling stops new orders only; existing orders can still be filled and cancelled |
 
 By design no admin function can move, hold or seize user funds. It only stops new trading.
 
@@ -44,7 +45,7 @@ Operate it with `node scripts/admin.mjs` (see `docs/OPERATIONS.md`).
 | Testnet rates | Maker 0.10%, taker 0.20% |
 | Cap | 1.00% per side, enforced by the contract |
 | Recipient | An EVM address (a privacy address cannot receive an ERC-20). Testnet: `0x3937B5F83f8e3DB413bD202bAf4da5A64879690F` |
-| Payout | Fees accrue inside the contract and `claimFees()` sends them to the recipient. This keeps a blacklisted recipient from blocking trades |
+| Payout | Fees accrue inside the contract per quote token and `claimFees(token)` sends them to the recipient. This keeps a blacklisted recipient from blocking trades |
 
 Unused maker-fee escrow on a buy order is refunded when the order is cancelled. Fees are always in the quote token, so fee revenue is public and auditable.
 

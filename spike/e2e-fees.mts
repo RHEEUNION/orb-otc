@@ -10,14 +10,14 @@ const env = Object.fromEntries(readFileSync('../.env', 'utf8').split('\n').filte
 const burnerKey = JSON.parse(readFileSync('burner.json', 'utf8')).key;
 const chain = defineChain({ id: 2700, name: 'Orbinum Testnet', nativeCurrency: { name: 'ORB', symbol: 'ORB', decimals: 18 }, rpcUrls: { default: { http: ['https://rpc-1.testnet.orbinum.io'] } } });
 const otcAbi = parseAbi([
-  'function createSellOrder(uint256 price) payable returns (uint256)',
+  'function createSellOrder(address quote, uint256 price) payable returns (uint256)',
   'function fillSellOrderPrivate(uint256 id, uint256 orbAmount, bytes32 commitment, bytes memo)',
   'function nextOrderId() view returns (uint256)',
-  'function accruedFees() view returns (uint256)',
+  'function accruedFees(address) view returns (uint256)',
   'function feeRecipient() view returns (address)',
   'function makerFeeBps() view returns (uint16)',
   'function takerFeeBps() view returns (uint16)',
-  'function claimFees()',
+  'function claimFees(address token)',
 ]);
 const usdAbi = parseAbi(['function balanceOf(address) view returns (uint256)', 'function approve(address,uint256) returns (bool)', 'function faucet()']);
 
@@ -46,11 +46,11 @@ const tFee = (q * tBps) / 10000n;
 await wait(await taker.writeContract({ address: usd, abi: usdAbi, functionName: 'faucet' }).catch(() => '0x' as `0x${string}`)).catch(() => null);
 await wait(await taker.writeContract({ address: usd, abi: usdAbi, functionName: 'approve', args: [otc, 2n ** 256n - 1n] }));
 const id = (await pub.readContract({ address: otc, abi: otcAbi, functionName: 'nextOrderId' })) as bigint;
-await wait(await maker.writeContract({ address: otc, abi: otcAbi, functionName: 'createSellOrder', args: [price], value: orb }));
+await wait(await maker.writeContract({ address: otc, abi: otcAbi, functionName: 'createSellOrder', args: [usd, price], value: orb }));
 
 const makerBefore = await bal(maker.account.address);
 const takerBefore = await bal(taker.account.address);
-const feesBefore = (await pub.readContract({ address: otc, abi: otcAbi, functionName: 'accruedFees' })) as bigint;
+const feesBefore = (await pub.readContract({ address: otc, abi: otcAbi, functionName: 'accruedFees', args: [usd] })) as bigint;
 const recipientBefore = await bal(recipient);
 
 const note = buildPrivateNote(ADDR, orb);
@@ -61,12 +61,12 @@ const r = await wait(await taker.writeContract({
 check('private fill succeeded', r.status === 'success');
 check(`taker paid price + taker fee (${fmt(q + tFee)})`, takerBefore - (await bal(taker.account.address)) === q + tFee);
 check(`maker received price - maker fee (${fmt(q - mFee)})`, (await bal(maker.account.address)) - makerBefore === q - mFee);
-const feesAfter = (await pub.readContract({ address: otc, abi: otcAbi, functionName: 'accruedFees' })) as bigint;
+const feesAfter = (await pub.readContract({ address: otc, abi: otcAbi, functionName: 'accruedFees', args: [usd] })) as bigint;
 check(`fees accrued ${fmt(mFee + tFee)}`, feesAfter - feesBefore === mFee + tFee);
 
-await wait(await maker.writeContract({ address: otc, abi: otcAbi, functionName: 'claimFees' }));
+await wait(await maker.writeContract({ address: otc, abi: otcAbi, functionName: 'claimFees', args: [usd] }));
 const paid = (await bal(recipient)) - recipientBefore;
 check(`recipient ${recipient} received ${fmt(feesAfter)} tUSD`, paid === feesAfter);
-check('accrued fees reset to 0', ((await pub.readContract({ address: otc, abi: otcAbi, functionName: 'accruedFees' })) as bigint) === 0n);
+check('accrued fees reset to 0', ((await pub.readContract({ address: otc, abi: otcAbi, functionName: 'accruedFees', args: [usd] })) as bigint) === 0n);
 console.log(failed === 0 ? '\nFEE FLOW OK' : `\n${failed} FAILED`);
 process.exit(failed === 0 ? 0 : 1);

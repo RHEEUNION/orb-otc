@@ -7,7 +7,10 @@
 //   node scripts/admin.mjs transfer-owner 0xnewOwner
 //   node scripts/admin.mjs set-fees <makerBps> <takerBps>   (100 bps = 1%, cap 100)
 //   node scripts/admin.mjs set-fee-recipient 0xaddr          (0x000... turns fees off)
-//   node scripts/admin.mjs claim-fees                        (sends accrued fees to the recipient)
+//   node scripts/admin.mjs claim-fees <token>                (sends accrued fees in that token to the recipient)
+//   node scripts/admin.mjs quotes                            (lists whitelisted quote tokens)
+//   node scripts/admin.mjs add-quote 0xtoken                 (whitelist USDT, USDC, ... exact contract addresses only)
+//   node scripts/admin.mjs remove-quote 0xtoken              (stops NEW orders in that token; existing orders keep working)
 import { readFileSync } from "node:fs";
 import { ethers } from "ethers";
 
@@ -42,8 +45,14 @@ switch (cmd) {
       makerFeeBps: Number(await otc.makerFeeBps()),
       takerFeeBps: Number(await otc.takerFeeBps()),
       feeRecipient: await otc.feeRecipient(),
-      accruedFeesTUsd: ethers.formatUnits(await otc.accruedFees(), 6),
     });
+    {
+      const [tokens, enabled] = await otc.getQuoteTokens();
+      for (let i = 0; i < tokens.length; i++) {
+        const t = new ethers.Contract(tokens[i], ["function symbol() view returns (string)", "function decimals() view returns (uint8)"], provider);
+        console.log(`quote ${await t.symbol()} ${tokens[i]} enabled=${enabled[i]} accruedFees=${ethers.formatUnits(await otc.accruedFees(tokens[i]), await t.decimals())}`);
+      }
+    }
     break;
   case "pause":
     await send("paused", otc.pause());
@@ -76,9 +85,26 @@ switch (cmd) {
     await send(`fee recipient set to ${ethers.getAddress(to)}`, otc.setFeeRecipient(ethers.getAddress(to)));
     break;
   }
-  case "claim-fees":
-    await send("fees claimed", otc.claimFees());
+  case "claim-fees": {
+    const [token] = addrs();
+    await send(`fees claimed for ${token}`, otc.claimFees(token));
     break;
+  }
+  case "quotes": {
+    const [tokens, enabled] = await otc.getQuoteTokens();
+    tokens.forEach((t, i) => console.log(t, "enabled:", enabled[i]));
+    break;
+  }
+  case "add-quote": {
+    const [token] = addrs();
+    await send(`quote token ${token} enabled`, otc.setQuoteToken(token, true));
+    break;
+  }
+  case "remove-quote": {
+    const [token] = addrs();
+    await send(`quote token ${token} disabled for new orders`, otc.setQuoteToken(token, false));
+    break;
+  }
   default:
-    console.log("Usage: status | pause | unpause | block <addr...> | unblock <addr...> | check <addr...> | transfer-owner <addr> | set-fees <maker> <taker> | set-fee-recipient <addr> | claim-fees");
+    console.log("Usage: status | pause | unpause | block <addr...> | unblock <addr...> | check <addr...> | transfer-owner <addr> | set-fees <maker> <taker> | set-fee-recipient <addr> | claim-fees <token> | quotes | add-quote <addr> | remove-quote <addr>");
 }

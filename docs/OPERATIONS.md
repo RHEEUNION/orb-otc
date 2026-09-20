@@ -33,7 +33,8 @@ Redeploying creates a fresh, empty order book, so only do it when the contract c
 
 ```bash
 npx hardhat run scripts/deploy-v2.ts --network orbinumTestnet   # deploys OrbOTCV2, adds `otcV2` to web/src/deployment.json
-# fee settings: FEE_RECIPIENT, MAKER_FEE_BPS (default 10), TAKER_FEE_BPS (default 20) as environment variables
+# environment variables: FEE_RECIPIENT, MAKER_FEE_BPS (default 10), TAKER_FEE_BPS (default 20),
+# QUOTE_TOKENS (comma separated; defaults to the testnet test token)
 ```
 
 The site uses `otcV2` when present and falls back to `otc` (v1). Deploying v2 does not touch v1.
@@ -50,10 +51,29 @@ node scripts/admin.mjs check 0xabc...
 node scripts/admin.mjs transfer-owner 0xMultisig...   # do this before mainnet
 node scripts/admin.mjs set-fees 10 20                 # maker and taker in basis points (100 = 1%, cap 100)
 node scripts/admin.mjs set-fee-recipient 0xabc...     # 0x000... turns fees off
-node scripts/admin.mjs claim-fees                     # send accrued fees to the recipient
+node scripts/admin.mjs claim-fees <token>             # send accrued fees in that quote token to the recipient
+node scripts/admin.mjs quotes                         # list whitelisted quote tokens
+node scripts/admin.mjs add-quote 0xToken              # whitelist a quote token (exact contract address only)
+node scripts/admin.mjs remove-quote 0xToken           # stop NEW orders in it; existing orders still fill and cancel
 ```
 
 See `docs/COMPLIANCE.md` for what these controls are for and their limits.
+
+## Turning on mainnet features
+
+Everything prepared for mainnet is off by default.
+
+| Feature | How to enable |
+|---|---|
+| USDT and USDC as quote tokens | Deploy with `QUOTE_TOKENS=<USDT>,<USDC>`, or call `add-quote` on a live contract. Use the exact contract addresses on Orbinum, never a look-alike. Only standard tokens work: fee-on-transfer and rebasing tokens are rejected, and tokens that return no value (USDT style) are supported |
+| Multichain balance scanner | Set `"features": { "multichainScan": true }` in `web/src/deployment.json` and rebuild. Preview on testnet with `?scan=1` in the URL. Networks and token addresses are in `web/src/scanner.ts` |
+| Bridging into Orbinum | Not built. Needs Orbinum's mainnet stablecoin route, see `docs/CROSSCHAIN.md` |
+
+Validate the scanner configuration against the live networks any time with `node spike/verify-scanner.mts` (checks every token address, symbol and decimals, then runs a real scan).
+
+## Testnet ORB budget
+
+The Orbinum faucet gives 5 ORB per 24 hours, and every sell order locks its ORB in escrow. Keep demo orders small (0.05 to 0.1 ORB) and cancel unused ones to get the ORB back. `node scripts/cancel-all.mjs <contract>` cancels every open order of the deployer wallet on a contract.
 
 ## Build and host the site
 
