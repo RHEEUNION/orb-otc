@@ -198,8 +198,10 @@ label.check input { width: 16px; height: 16px; accent-color: #fff; }
 .foot { border-top: 1px solid var(--line); padding: 22px 24px; margin-top: auto; flex-shrink: 0; }
 .foot-in { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .built { display: inline-flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; }
-.built img { display: block; height: 18px; width: auto; opacity: 0.85; transition: opacity 0.2s; }
+.built img { display: block; height: 36px; width: auto; opacity: 0.85; transition: opacity 0.2s; }
 .built a:hover img { opacity: 1; }
+.gh { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-decoration: none; transition: color 0.2s; }
+.gh:hover { color: #fff; }
 .disc { color: var(--muted); font-size: 12px; max-width: 520px; }
 
 /* ---------- motion ---------- */
