@@ -491,15 +491,26 @@ export default function App() {
         <section className="hero">
           <Halftone />
           <div className="hero-copy">
-            <p className="eyebrow reveal" style={{ ["--i" as any]: 0 }}>Over-the-counter · Orbinum</p>
-            <h1 className="reveal" style={{ ["--i" as any]: 1 }}>Trade ORB<br /><span>peer to peer.</span></h1>
-            <p className="lede reveal" style={{ ["--i" as any]: 2 }}>Post or take an order, settle on-chain in one transaction, and receive your ORB into a shielded note if you choose.</p>
+            <p className="eyebrow reveal" style={{ ["--i" as any]: 0 }}>Private OTC · Orbinum</p>
+            <h1 className="reveal" style={{ ["--i" as any]: 1 }}>Big trades, quietly.<br /><span>Provable when it matters.</span></h1>
+            <p className="lede reveal" style={{ ["--i" as any]: 2 }}>Escrowed OTC for ORB, built for block deals. Receive into a shielded note so the public cannot see who ends up holding it, and disclose the trade to an exchange, auditor or counterparty whenever you choose. Private, not anonymous.</p>
             <div className="hero-cta reveal" style={{ ["--i" as any]: 3 }}>
               <button className="btn solid" onClick={() => (account ? setTab("create") : connect())}>{account ? "New order" : "Connect wallet"}</button>
               <button className="btn ghost" onClick={() => setTab("faq")}>How it works</button>
             </div>
           </div>
           <MetalLogo src={`${import.meta.env.BASE_URL}brand/orbinum-mark-white.svg`} />
+        </section>
+      )}
+
+      {tab === "market" && (
+        <section className="pillars" aria-label="Why ORB.OTC">
+          <div className="pillars-in">
+            <div><h3>Escrowed</h3><p>Funds sit in a contract, not with us. Both sides settle in one transaction, and you can always cancel.</p></div>
+            <div><h3>Private receive</h3><p>Take ORB into a shielded note. Price and size stay public on this testnet build; who holds the ORB afterwards does not.</p></div>
+            <div><h3>Provable</h3><p>Download a receipt with a disclosure key and sign it with your trading address. Show it only to whoever needs it.</p></div>
+            <div><h3>For everyone</h3><p>Foundations, market makers, funds, validators and individuals. Community first, institutions welcome.</p></div>
+          </div>
         </section>
       )}
 
@@ -562,7 +573,11 @@ export default function App() {
           <div className="faq reveal">
             <h2>FAQ</h2>
             <h3>What is this?</h3>
-            <p>A peer-to-peer OTC order book for ORB on the Orbinum testnet. Makers lock funds in an escrow contract; takers fill orders in one transaction. No custody by us, no backend.</p>
+            <p>A private-by-design OTC desk for ORB on the Orbinum testnet. Makers lock funds in an escrow contract; takers fill orders in one transaction. No custody by us, no backend. It exists for trades where broadcasting who ends up with the tokens moves the market, such as block deals.</p>
+            <h3>Who is it for?</h3>
+            <p>Anyone who trades in size and prefers not to advertise it: foundations and project teams moving treasury allocations, market makers borrowing or buying inventory, funds and VCs, validators, and individuals. It is community-first, and institutions are welcome.</p>
+            <h3>Is it anonymous?</h3>
+            <p>No. It is <b>private, not anonymous</b>. The public cannot see who holds ORB after a private receive, but you keep the means to prove a trade to an exchange, auditor, tax authority or counterparty when you choose to. Price, size and the trading addresses of the order itself are still public on-chain, and this site does not promise otherwise.</p>
             <h3>Which tokens can I trade against ORB?</h3>
             <p>Orders are priced in a whitelisted stablecoin. On testnet that is the test token {testSymbol}. Mainnet will use USDT and USDC only.</p>
             <h3>What is {testSymbol}?</h3>

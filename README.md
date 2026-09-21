@@ -2,9 +2,9 @@
 
 # ORB.OTC
 
-**Trade ORB peer-to-peer on the Orbinum testnet.**
+**Big trades, quietly. Provable when it matters.**
 
-Connect MetaMask · post or take an order · settle on-chain in one transaction.
+A private OTC desk for ORB on Orbinum. Escrowed settlement, shielded receive, selective disclosure. *Private, not anonymous.*
 
 ![status](https://img.shields.io/badge/status-testnet%20only-yellow)
 ![chain](https://img.shields.io/badge/Orbinum%20Testnet-2700-8b7bff)
@@ -17,6 +17,18 @@ Connect MetaMask · post or take an order · settle on-chain in one transaction.
 ---
 
 **Live demo:** https://rheeunion.github.io/orb-otc-demo/
+
+## Who it is for
+
+Sometimes a trade should not be broadcast to everyone: a foundation moving a treasury allocation, a market maker taking inventory, a fund closing a block, a validator rebalancing, or a holder exiting a large position. Public wallets turn each of those into a market signal.
+
+ORB.OTC is community-first and institution-friendly. It gives you:
+
+- **Escrow.** Funds sit in a contract, never with us. Cancelling always works.
+- **Private receive.** The buyer takes ORB into a shielded note, so the public cannot see who holds it afterwards.
+- **Selective disclosure.** A receipt with a disclosure key and a signature from the trading address lets you prove the trade to an exchange, auditor, tax authority or counterparty. Only when you choose to.
+
+What it does **not** hide today: an order's price, size and trading addresses are public on-chain, and only the ORB receive side is private. See [docs/POSITIONING.md](docs/POSITIONING.md) for the full statement of what is and is not private.
 
 ## Trade in four steps
 
